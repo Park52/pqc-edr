@@ -1,0 +1,17 @@
+# Build artifacts
+/build/
+*.o
+*.bpf.o
+vmlinux.h
+
+# Local Claude Code state
+/.claude/
+
+# Secrets / env
+.env
+*.pem
+*.key
+
+# Editor
+.vscode/
+.idea/
