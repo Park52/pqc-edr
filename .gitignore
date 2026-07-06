@@ -4,6 +4,9 @@
 *.bpf.o
 vmlinux.h
 
+# Vendored third-party (built locally via scripts/build-liboqs.sh)
+/third_party/
+
 # Local Claude Code state
 /.claude/
 

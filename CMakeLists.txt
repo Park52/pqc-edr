@@ -12,6 +12,11 @@ endif()
 # --- 옵션 -------------------------------------------------------------------
 option(BUILD_AGENT "Build the eBPF collector agent" ON)
 option(BUILD_ANALYZER "Build the LLM analyzer (Week 3+)" OFF)
+option(BUILD_CRYPTO "Build the PQC secure channel + examples" ON)
+
+# --- liboqs (scripts/build-liboqs.sh 로 로컬 빌드된 prefix) -------------------
+set(LIBOQS_PREFIX ${CMAKE_SOURCE_DIR}/third_party/liboqs)
+list(APPEND CMAKE_PREFIX_PATH ${LIBOQS_PREFIX})
 
 # --- 공통 헤더 (스키마 등) ---------------------------------------------------
 add_library(pqsec_common INTERFACE)
@@ -27,4 +32,8 @@ endif()
 
 if(BUILD_ANALYZER)
   add_subdirectory(analyzer)
+endif()
+
+if(BUILD_CRYPTO)
+  add_subdirectory(crypto)
 endif()
