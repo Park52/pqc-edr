@@ -14,7 +14,9 @@ add_library(pqsec_channel STATIC
   src/x25519.cpp
   src/kdf.cpp
   src/session.cpp
-  src/record.cpp)
+  src/record.cpp
+  src/handshake.cpp
+  src/socket.cpp)
 target_include_directories(pqsec_channel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(pqsec_channel PUBLIC OQS::oqs OpenSSL::Crypto)
 
@@ -33,3 +35,7 @@ target_link_libraries(hybrid_demo PRIVATE pqsec_channel OQS::oqs)
 # record layer 테스트 (AES-256-GCM 왕복 + 변조/재정렬/재전송 거부)
 add_executable(record_demo examples/record_demo.cpp)
 target_link_libraries(record_demo PRIVATE pqsec_channel OQS::oqs)
+
+# 엔드투엔드 암호화 채널 데모 (실제 TCP 소켓, fork 로 agent/analyzer)
+add_executable(channel_e2e_demo examples/channel_e2e_demo.cpp)
+target_link_libraries(channel_e2e_demo PRIVATE pqsec_channel pqsec_common)
