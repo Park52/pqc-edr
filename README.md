@@ -33,7 +33,7 @@
 |---|---|---|
 | **Week 1** | eBPF collector (execve + tcp_connect, CO-RE, ring buffer) | ✅ |
 | **Week 2** | PQC 하이브리드 mTLS 채널 (핸드셰이크 + record layer) | ✅ |
-| **Week 3** | analyzer 데몬 + Claude API 이상탐지 + 엔드투엔드 통합 | ⏳ |
+| **Week 3** | analyzer 데몬 + Claude API 이상탐지 + 엔드투엔드 통합 | ✅ |
 | **Week 4** | 컨테이너화 + 위협 시나리오 데모 + 문서 | ⏳ |
 
 ## 핵심 보안 설계
@@ -46,6 +46,9 @@
   변조·재정렬·재전송을 모두 거부.
 - **Fail-closed 전반** — 크립토·파싱 실패는 조용히 넘기지 않고 즉시 예외/거부.
 - **최소권한 eBPF** — `ksyscall`(kprobe PMU) attach로 root 없이 `CAP_BPF`/`CAP_PERFMON`만으로 동작.
+- **LLM 이상탐지 비용·오탐 통제** — 룰 프리필터로 명백 정상/악성을 앞단에서 걸러 LLM 호출을
+  줄이고, `claude-haiku-4-5` 1차 분류 → 의심만 `claude-sonnet-5` 심층. LLM 호출 실패는
+  fail-safe(미분류로 surface, 데몬 중단 X). 오프라인/CI용 mock 분류기 내장.
 
 암호 스위트: **ML-KEM-768 + X25519 + ML-DSA-65 + HKDF-SHA256 + AES-256-GCM** (PQC는 NIST level 3).
 검증된 라이브러리(liboqs, OpenSSL)의 primitive를 **조합만** 하며, 직접 구현한 암호는 없다.
@@ -75,6 +78,18 @@ cmake -S . -B build && cmake --build build
 ./build/crypto/hybrid_demo       # 하이브리드 키합의 + ML-DSA 상호인증 + MITM 거부
 ./build/crypto/record_demo       # AES-256-GCM 왕복 + 변조/재정렬/재전송 거부
 ./build/crypto/channel_selftest  # KEM/서명/와이어 포맷 셀프테스트
+```
+
+**Week 3 — 엔드투엔드 이상탐지 데모** (agent → PQC 채널 → analyzer → LLM → alert):
+```bash
+scripts/demo-week3.sh                       # mock LLM (오프라인, 권한 불필요)
+USE_REAL_LLM=1 ANTHROPIC_API_KEY=sk-... scripts/demo-week3.sh   # 실 Claude API
+
+# 실 eBPF 수집을 채널로 흘려보내기 (합성 대신):
+./build/tools/pqsec_keygen agent && ./build/tools/pqsec_keygen analyzer  # 신원 프로비저닝
+sudo setcap cap_bpf,cap_perfmon,cap_net_admin+ep ./build/agent/agent
+./build/analyzer/analyzer --id analyzer --peer agent.pub --mock-llm &    # 데몬
+./build/agent/agent --forward --id agent --peer analyzer.pub             # 실 수집 전송
 ```
 
 **Week 1 — eBPF collector** (커널 이벤트 수집, 권한 필요):
@@ -115,4 +130,5 @@ docs/           설계·학습 문서
 - 세션 재개·키 갱신·신원 은닉, 사이드채널 방어(라이브러리에 위임)
 
 ## 기술 스택
-C++17 · CMake · libbpf + CO-RE · liboqs (ML-KEM/ML-DSA) · OpenSSL (X25519/HKDF/AES-GCM) · Claude API (예정)
+C++17 · CMake · libbpf + CO-RE · liboqs (ML-KEM/ML-DSA) · OpenSSL (X25519/HKDF/AES-GCM) ·
+Claude API (Haiku→Sonnet, libcurl + nlohmann/json)
