@@ -6,4 +6,4 @@
 bpf_object(collector SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bpf/collector.bpf.c)
 
 add_executable(agent src/main.cpp)
-target_link_libraries(agent PRIVATE collector_skel pqsec_common)
+target_link_libraries(agent PRIVATE collector_skel pqsec_common pqsec_channel)

@@ -30,15 +30,16 @@ target_include_directories(pqsec_json INTERFACE ${CMAKE_SOURCE_DIR}/third_party/
 include(${CMAKE_SOURCE_DIR}/cmake/BpfObject.cmake)
 
 # --- 서브 컴포넌트 -----------------------------------------------------------
+# crypto(pqsec_channel)를 먼저 — agent/analyzer 가 링크한다.
+if(BUILD_CRYPTO)
+  add_subdirectory(crypto)
+  add_subdirectory(tools)
+endif()
+
 if(BUILD_AGENT)
   add_subdirectory(agent)
 endif()
 
 if(BUILD_ANALYZER)
   add_subdirectory(analyzer)
-endif()
-
-if(BUILD_CRYPTO)
-  add_subdirectory(crypto)
-  add_subdirectory(tools)
 endif()

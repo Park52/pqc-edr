@@ -21,3 +21,7 @@ target_link_libraries(analyzer_selftest PRIVATE analyzer_core)
 # 실 Claude API 경로 수동 점검 (ANTHROPIC_API_KEY 필요)
 add_executable(llm_probe src/llm_probe.cpp)
 target_link_libraries(llm_probe PRIVATE analyzer_core)
+
+# analyzer 데몬 (PQC 채널 수신 → 분류 → alert)
+add_executable(analyzer src/main.cpp)
+target_link_libraries(analyzer PRIVATE analyzer_core pqsec_channel)
