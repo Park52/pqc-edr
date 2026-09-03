@@ -16,7 +16,8 @@ add_library(pqsec_channel STATIC
   src/session.cpp
   src/record.cpp
   src/handshake.cpp
-  src/socket.cpp)
+  src/socket.cpp
+  src/identity.cpp)
 target_include_directories(pqsec_channel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(pqsec_channel PUBLIC OQS::oqs OpenSSL::Crypto)
 

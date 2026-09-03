@@ -4,8 +4,10 @@
 *.bpf.o
 vmlinux.h
 
-# Vendored third-party (built locally via scripts/build-liboqs.sh)
-/third_party/
+# liboqs: 로컬 빌드물 (scripts/build-liboqs.sh) — 커밋 안 함
+/third_party/liboqs/
+/third_party/liboqs-src/
+# (third_party/json 등 vendored 단일 헤더는 커밋함)
 
 # Local Claude Code state
 /.claude/
