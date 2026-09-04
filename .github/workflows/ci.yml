@@ -1,0 +1,56 @@
+# CI — 빌드·셀프테스트·컨테이너 이미지.
+#
+# eBPF agent 는 제외(BUILD_AGENT=OFF): 러너 커널의 BTF(/sys/kernel/btf/vmlinux) 와 clang/bpftool 에
+# 의존해 재현성이 낮다. agent 는 로컬(setcap)에서 검증하고, 여기선 crypto 채널·analyzer 를 검증한다.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    name: build + ctest (crypto channel, analyzer)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: apt deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config git ca-certificates libssl-dev libcurl4-openssl-dev
+
+      - name: cache liboqs (scripts/build-liboqs.sh 가 바뀌지 않으면 재사용)
+        uses: actions/cache@v4
+        with:
+          path: third_party/liboqs
+          key: liboqs-${{ runner.os }}-${{ hashFiles('scripts/build-liboqs.sh') }}
+
+      - name: build liboqs (ML-KEM-768 + ML-DSA-65)
+        run: bash scripts/build-liboqs.sh
+
+      - name: configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_AGENT=OFF
+
+      - name: build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: ctest (KEM/서명/와이어, 하이브리드+상호인증+MITM 거부, record layer, TCP e2e, 분류 파이프라인)
+        run: ctest --test-dir build --output-on-failure
+
+  docker:
+    name: analyzer container image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build image (multi-stage)
+        run: docker build -f docker/Dockerfile.analyzer -t pqc-edr-analyzer .
+
+      - name: smoke — 신원 파일 없이 기동하면 fail-closed 로 즉시 종료해야 한다
+        run: |
+          out=$(docker run --rm pqc-edr-analyzer 2>&1 || true)
+          echo "$out"
+          grep -q "신원 로드 실패" <<<"$out"
