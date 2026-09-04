@@ -14,6 +14,9 @@ option(BUILD_AGENT "Build the eBPF collector agent" ON)
 option(BUILD_ANALYZER "Build the LLM analyzer (Week 3+)" ON)
 option(BUILD_CRYPTO "Build the PQC secure channel + examples" ON)
 
+# --- 테스트 (셀프테스트 실행파일을 ctest 로 묶음: `ctest --test-dir build`) -------
+enable_testing()
+
 # --- liboqs (scripts/build-liboqs.sh 로 로컬 빌드된 prefix) -------------------
 set(LIBOQS_PREFIX ${CMAKE_SOURCE_DIR}/third_party/liboqs)
 list(APPEND CMAKE_PREFIX_PATH ${LIBOQS_PREFIX})

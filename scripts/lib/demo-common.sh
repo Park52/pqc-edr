@@ -11,6 +11,9 @@
 # eBPF 모드에서는 이 스크립트가 실행하는 외부 명령도 전부 이벤트가 된다. 그래서 대기·매칭은
 # bash 내장(read -t, [[ ]], $(<file))만 써서 수집 중에 노이즈를 만들지 않는다.
 
+# .env 가 있으면 로드 (ANTHROPIC_API_KEY 등). 실 LLM 은 USE_REAL_LLM=1 일 때만 쓰므로 자동 과금은 없다.
+if [[ -z "${ANTHROPIC_API_KEY:-}" && -f "$REPO/.env" ]]; then set -a; . "$REPO/.env"; set +a; fi
+
 # sleep(1) 대체 — 외부 프로세스를 띄우지 않는다
 pause() { read -rt "$1" <> <(:) || :; }
 

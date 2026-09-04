@@ -18,6 +18,7 @@ target_link_libraries(analyzer_core PUBLIC pqsec_common pqsec_json CURL::libcurl
 # 분류 파이프라인 셀프테스트 (오프라인, mock LLM)
 add_executable(analyzer_selftest src/analyzer_selftest.cpp)
 target_link_libraries(analyzer_selftest PRIVATE analyzer_core)
+add_test(NAME analyzer.selftest COMMAND analyzer_selftest)  # 룰·코릴레이션·티어링 (mock LLM)
 
 # 실 Claude API 경로 수동 점검 (ANTHROPIC_API_KEY 필요)
 add_executable(llm_probe src/llm_probe.cpp)

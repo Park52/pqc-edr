@@ -21,7 +21,7 @@ PQC로 보호되는 mTLS 채널 위에 eBPF 보안 이벤트를 전송하고, LL
 
 ## 기술 스택
 - 언어: C++ (C++17 이상), CMake
-- eBPF: libbpf + CO-RE, Ubuntu 26.04 / kernel 6.17
+- eBPF: libbpf + CO-RE, Ubuntu 24.04 / kernel 6.17
 - PQC: liboqs (ML-KEM/Kyber), 고전 X25519와 하이브리드
 - 대칭암호: AES-256-GCM, 키유도 HKDF
 - LLM: Claude API (Haiku 1차 분류 → Sonnet 심층), 룰기반 프리필터 선행

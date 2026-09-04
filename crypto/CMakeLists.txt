@@ -45,3 +45,9 @@ target_link_libraries(channel_e2e_demo PRIVATE pqsec_channel pqsec_common)
 find_package(Threads REQUIRED)
 add_executable(bench_handshake examples/bench_handshake.cpp)
 target_link_libraries(bench_handshake PRIVATE pqsec_channel OQS::oqs OpenSSL::Crypto Threads::Threads)
+
+# ctest 등록 — 각 데모는 검증 실패 시 non-zero 로 종료한다
+add_test(NAME crypto.channel_selftest COMMAND channel_selftest)   # KEM/서명/와이어 왕복, 위조·잘린 프레임 거부
+add_test(NAME crypto.hybrid_demo     COMMAND hybrid_demo)         # 하이브리드 키합의 + 상호인증 + MITM 거부
+add_test(NAME crypto.record_demo     COMMAND record_demo)         # AES-GCM 왕복 + 변조/재정렬/재전송 거부
+add_test(NAME crypto.channel_e2e     COMMAND channel_e2e_demo)    # 실 TCP 두 프로세스 엔드투엔드

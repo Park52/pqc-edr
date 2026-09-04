@@ -10,6 +10,8 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="$REPO/build"
+# .env 가 있으면 로드 (ANTHROPIC_API_KEY 등). 실 LLM 은 USE_REAL_LLM=1 일 때만 쓰므로 자동 과금은 없다.
+if [[ -z "${ANTHROPIC_API_KEY:-}" && -f "$REPO/.env" ]]; then set -a; . "$REPO/.env"; set +a; fi
 PORT="${PORT:-19443}"
 
 for bin in tools/pqsec_keygen analyzer/analyzer agent/agent; do
