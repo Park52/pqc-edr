@@ -26,8 +26,10 @@ target_include_directories(pqsec_common INTERFACE ${CMAKE_SOURCE_DIR}/common)
 add_library(pqsec_json INTERFACE)
 target_include_directories(pqsec_json INTERFACE ${CMAKE_SOURCE_DIR}/third_party/json)
 
-# --- eBPF 빌드 헬퍼 함수 -----------------------------------------------------
-include(${CMAKE_SOURCE_DIR}/cmake/BpfObject.cmake)
+# --- eBPF 빌드 헬퍼 함수 (agent 빌드 시에만 — 컨테이너 빌드는 clang/bpftool 불필요) ---
+if(BUILD_AGENT)
+  include(${CMAKE_SOURCE_DIR}/cmake/BpfObject.cmake)
+endif()
 
 # --- 서브 컴포넌트 -----------------------------------------------------------
 # crypto(pqsec_channel)를 먼저 — agent/analyzer 가 링크한다.

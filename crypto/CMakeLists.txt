@@ -40,3 +40,8 @@ target_link_libraries(record_demo PRIVATE pqsec_channel OQS::oqs)
 # 엔드투엔드 암호화 채널 데모 (실제 TCP 소켓, fork 로 agent/analyzer)
 add_executable(channel_e2e_demo examples/channel_e2e_demo.cpp)
 target_link_libraries(channel_e2e_demo PRIVATE pqsec_channel pqsec_common)
+
+# 벤치마크: 프리미티브·핸드셰이크 지연, 하이브리드 vs 고전 오버헤드 (docs/BENCHMARK.md)
+find_package(Threads REQUIRED)
+add_executable(bench_handshake examples/bench_handshake.cpp)
+target_link_libraries(bench_handshake PRIVATE pqsec_channel OQS::oqs OpenSSL::Crypto Threads::Threads)
