@@ -40,10 +40,10 @@
 
 이미 익숙한 영역이라 빠르게 통과하며 프로젝트 뼈대를 세우는 주.
 
-- [ ] 프로젝트 구조 확정, CMake 빌드 세팅, libbpf + CO-RE 스캐폴딩
-- [ ] execve / tcp_connect 두 개 eBPF 프로그램 작성 (ring buffer로 유저스페이스 전달)
-- [ ] 이벤트 공통 스키마 정의 (`SecurityEvent` 직렬화 포맷 — flatbuffers 또는 단순 POD + length-prefix)
-- [ ] collector가 이벤트를 stdout/파일로 뱉는 것까지 완성 (아직 네트워크 없음)
+- [x] 프로젝트 구조 확정, CMake 빌드 세팅, libbpf + CO-RE 스캐폴딩
+- [x] execve / tcp_connect 두 개 eBPF 프로그램 작성 (ring buffer로 유저스페이스 전달)
+- [x] 이벤트 공통 스키마 정의 (`SecurityEvent` 직렬화 포맷 — flatbuffers 또는 단순 POD + length-prefix)
+- [x] collector가 이벤트를 stdout/파일로 뱉는 것까지 완성 (아직 네트워크 없음)
 
 **핵심 개념 (핵심만):** ring buffer vs perf buffer 차이, CO-RE가 왜 필요한지 한 문단.
 
@@ -53,11 +53,11 @@
 
 프로젝트의 차별화 포인트. 여기에 시간을 제일 많이 투자.
 
-- [ ] liboqs 빌드·링크, ML-KEM(Kyber) KEM API 최소 예제 돌리기
-- [ ] 하이브리드 키교환 설계: X25519 공유비밀 ∥ ML-KEM 공유비밀 → HKDF로 세션키 유도
-- [ ] 핸드셰이크 메시지 포맷 직접 설계 (ClientHello / ServerHello 축약판, 왜 이 필드가 필요한지 근거 남기기)
-- [ ] AES-256-GCM record layer (nonce 관리, 재전송/순서 처리 최소 구현)
-- [ ] 로컬 소켓으로 agent↔analyzer 암호화 채널 완성
+- [x] liboqs 빌드·링크, ML-KEM(Kyber) KEM API 최소 예제 돌리기
+- [x] 하이브리드 키교환 설계: X25519 공유비밀 ∥ ML-KEM 공유비밀 → HKDF로 세션키 유도
+- [x] 핸드셰이크 메시지 포맷 직접 설계 (ClientHello / ServerHello 축약판, 왜 이 필드가 필요한지 근거 남기기)
+- [x] AES-256-GCM record layer (nonce 관리, 재전송/순서 처리 최소 구현)
+- [x] 로컬 소켓으로 agent↔analyzer 암호화 채널 완성
 
 **핵심 개념 (핵심만):** KEM이 뭐고 왜 PQC는 서명이 아니라 KEM부터인지, "하이브리드"를 왜 쓰는지(고전 알고리즘 깨져도 안전, 반대도 성립), HKDF의 역할. → 면접 설명용으로 이 3개만 확실히.
 
@@ -65,12 +65,12 @@
 
 ## Week 3 — LLM Analyzer + 통합
 
-- [ ] analyzer daemon: 채널에서 이벤트 수신 → 디코드 → 배치
-- [ ] Claude API 연동: 이벤트 시퀀스를 넣어 normal/suspicious 분류 + 사유 설명
+- [x] analyzer daemon: 채널에서 이벤트 수신 → 디코드 → 배치
+- [x] Claude API 연동: 이벤트 시퀀스를 넣어 normal/suspicious 분류 + 사유 설명
   - 프롬프트에 룰 기반 1차 필터를 코드로 먼저 태워 토큰 절약 (InvestmentAgent에서 쓰던 패턴 재활용)
   - Haiku로 1차 분류, 의심스러운 것만 Sonnet으로 심층 분석 (모델 분리)
-- [ ] alert 출력 (구조화 로그 + 콘솔)
-- [ ] agent → PQC 채널 → analyzer → LLM → alert 엔드투엔드 데모 성공
+- [x] alert 출력 (구조화 로그 + 콘솔)
+- [x] agent → PQC 채널 → analyzer → LLM → alert 엔드투엔드 데모 성공
 
 **핵심 개념 (핵심만):** 왜 룰 필터를 LLM 앞단에 두는지(비용·오탐), 이벤트를 어떻게 컨텍스트로 만들지.
 
@@ -78,11 +78,11 @@
 
 ## Week 4 — 클라우드화 + 마무리 + 문서
 
-- [ ] analyzer를 Docker 컨테이너로, agent는 호스트에서 채널로 접속 (클라우드 서비스 이해 어필)
-- [ ] 위협 시나리오 데모 2개 (예: 의심스러운 execve 체인, 비정상 아웃바운드 커넥션) 재현 스크립트
-- [ ] README: 아키텍처 다이어그램 + 위협모델 + PQC 설계 근거 + 데모 GIF
-- [ ] 면접 대비 Q&A 노트 (아래 항목 각각 3문장 이내로 답 준비)
-- [ ] (여유 시) 벤치마크: 핸드셰이크 지연, 하이브리드 vs 고전 키교환 오버헤드
+- [x] analyzer를 Docker 컨테이너로, agent는 호스트에서 채널로 접속 (클라우드 서비스 이해 어필)
+- [x] 위협 시나리오 데모 2개 (예: 의심스러운 execve 체인, 비정상 아웃바운드 커넥션) 재현 스크립트
+- [x] README: 아키텍처 다이어그램 + 위협모델 + PQC 설계 근거 + 데모 GIF
+- [x] 면접 대비 Q&A 노트 (아래 항목 각각 3문장 이내로 답 준비)
+- [x] (여유 시) 벤치마크: 핸드셰이크 지연, 하이브리드 vs 고전 키교환 오버헤드
 
 **면접 대비 Q&A 필수 항목:**
 1. 왜 하이브리드 KEM인가? 순수 PQC가 아니라?
