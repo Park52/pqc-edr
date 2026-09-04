@@ -1,0 +1,11 @@
+# 컨테이너 빌드 컨텍스트에서 제외 (docker/Dockerfile.analyzer)
+build/
+third_party/liboqs/
+third_party/liboqs-src/
+.git/
+.claude/
+docs/
+*.key
+*.pub
+*.pem
+.env

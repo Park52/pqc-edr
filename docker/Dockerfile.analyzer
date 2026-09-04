@@ -1,0 +1,40 @@
+# docker/Dockerfile.analyzer — analyzer 컨테이너 이미지 (멀티스테이지)
+#
+#   builder : liboqs(ML-KEM-768/ML-DSA-65 최소 빌드) + analyzer 빌드. eBPF agent 는 제외(BUILD_AGENT=OFF).
+#   runtime : 슬림 — analyzer 바이너리 + liboqs.so + OpenSSL/libcurl 런타임만, 비루트 사용자.
+#
+# 빌드:  docker build -f docker/Dockerfile.analyzer -t pqc-edr-analyzer .
+# 실행:  docker run --rm -p 127.0.0.1:9443:9443 -v "$PWD/keys:/keys:ro" \
+#            -e ANTHROPIC_API_KEY pqc-edr-analyzer [--mock-llm]
+#        /keys 에 analyzer.pub / analyzer.key / agent.pub (pqsec_keygen 으로 생성) 를 읽기전용 마운트.
+#        키는 이미지에 굽지 않는다 — 신원은 배포 시 주입.
+
+FROM ubuntu:24.04 AS builder
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git ca-certificates pkg-config \
+      libssl-dev libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+# liboqs 는 소스가 거의 안 바뀌므로 별도 레이어로 캐시 (버전은 스크립트에 고정)
+COPY scripts/build-liboqs.sh scripts/
+RUN bash scripts/build-liboqs.sh
+COPY . .
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_AGENT=OFF \
+    && cmake --build build --target analyzer -j"$(nproc)"
+
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libssl3t64 libcurl4t64 ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --shell /usr/sbin/nologin analyzer \
+    && mkdir -p /keys
+COPY --from=builder /src/third_party/liboqs/lib/liboqs.so* /usr/local/lib/
+COPY --from=builder /src/build/analyzer/analyzer /usr/local/bin/analyzer
+RUN ldconfig
+USER analyzer
+WORKDIR /keys
+EXPOSE 9443
+# 컨테이너 안에서는 0.0.0.0 리슨 (호스트에는 -p 127.0.0.1:9443:9443 로 로컬에만 공개)
+ENTRYPOINT ["analyzer", "--bind", "0.0.0.0", "--id", "/keys/analyzer", "--peer", "/keys/agent.pub"]
+CMD []
