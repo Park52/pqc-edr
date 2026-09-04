@@ -68,6 +68,7 @@ DoS, 사이드채널(라이브러리에 위임), LLM 프롬프트 인젝션(comm
 - **최소권한 eBPF** — `ksyscall`(kprobe PMU) attach 로 root 없이 `CAP_BPF`/`CAP_PERFMON` 만으로 동작.
 - **LLM 통제 3단** — ① 룰 프리필터(명백한 것은 LLM 없이) → ② 시퀀스 코릴레이션(순서·반복은 결정론적으로) → ③ 애매한 것만
   `claude-haiku-4-5` 1차 → 의심만 `claude-sonnet-5` 심층. LLM 은 설명·심각도 보정 역할이며 판정의 앵커는 룰이다.
+  (실 API 라이브 검증 완료 — 아래 시나리오 데모의 실 결과 참조.)
 
 암호 스위트: **ML-KEM-768 + X25519 + ML-DSA-65 + HKDF-SHA256 + AES-256-GCM** (PQC 는 NIST level 3).
 검증된 라이브러리(liboqs, OpenSSL)의 primitive 를 **조합만** 하며, 직접 구현한 암호는 없다.
@@ -129,6 +130,19 @@ USE_REAL_LLM=1 ANTHROPIC_API_KEY=sk-… scripts/scenario-2-c2-beacon.sh   # mock
           | 공인 IP 비표준 포트 아웃바운드; 비콘 의심: python3 → 198.51.100.7:4444 로 60초 윈도우 내 3회 반복 접속
 ```
 (실 eBPF 모드에선 그 사이에 시스템의 다른 프로세스들 — 예: 에디터의 상태 폴링 — 이 drop / Haiku-normal 로 걸러지는 것도 보인다.)
+
+실 Claude API 로 돌린 결과 (`USE_REAL_LLM=1`, 2026-09-05 검증):
+```
+  [llm:claude-haiku-4-5 normal] execve comm=bash file=/usr/bin/curl  (curl is a standard utility for downloading files…, conf=0.95)
+  [ALERT] malicious  sev=critical src=rule+download-exec-chain | execve comm=bash file=/tmp/.cache-Ab3x/sysupdate | 임시 디렉토리에서 실행; 다운로드→실행 체인: …
+  [ALERT] suspicious sev=high     src=beacon+sonnet | connect comm=updater dst=203.0.113.9:443
+          | 비콘 의심: updater → 203.0.113.9:443 로 60초 윈도우 내 3회 반복 접속 / Process 'updater' shows periodic beaconing …
+            consistent with C2 beacon behavior (MITRE ATT&CK T1071.001) … Legitimate updaters can poll periodically, but regular
+            interval reconnects to a single external IP warrant investigation … before escalating to malicious.
+```
+단일 이벤트만 보는 LLM 은 `curl` 하나를 정상(0.95)으로 판정하지만, 시퀀스 코릴레이션이 체인을 Critical 로 잡는다 —
+**LLM 이 아니라 결정론적 계층이 판정의 앵커**인 이유. 코릴레이션 hit 가 Sonnet 으로 직행하면 MITRE ATT&CK 매핑이 붙은,
+과잉 확신 없는 설명이 나온다.
 
 ### Docker — analyzer 컨테이너, agent 는 호스트 (Week 4)
 

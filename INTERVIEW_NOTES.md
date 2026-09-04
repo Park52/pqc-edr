@@ -54,6 +54,8 @@ ML-KEM(Kyber)은 격자(MLWE) 기반으로 NIST가 가장 먼저 표준화했고
 ### 3. LLM 이상탐지의 오탐/할루시네이션 리스크를 어떻게 통제했나?
 LLM을 최종 판정자가 아니라 **"애매한 것의 설명자"**로 두었다 — 룰 프리필터가 명백 정상(화이트리스트·사설망)은 LLM 없이 drop, 명백 악성(임시경로 실행·nc)은 LLM 없이 alert, 시퀀스 코릴레이션(다운로드→실행 체인, 비콘)은 결정론적 근거로 alert하고 LLM은 그 사이의 애매한 이벤트만 본다. 결정론적 근거가 있는 이벤트는 LLM이 '정상'이라 해도 Suspicious 아래로 못 내리고(LLM은 심각도 보정·설명만), 호출·파싱 실패는 fail-safe로 `unknown`을 surface해 조용히 통과시키지 않는다. 오프라인 mock으로 파이프라인을 결정론적으로 회귀 테스트하며, 남은 리스크는 comm/filename에 지시문을 심는 프롬프트 인젝션이다(5번).
 
+> 실측(2026-09-05, 실 Claude API): Haiku는 단독 `curl` execve를 정상(conf 0.95)으로 판정했지만 코릴레이션이 다운로드→실행 체인을 Critical로 잡았다. 비콘 hit를 Sonnet에 직행시키니 MITRE ATT&CK(T1071.001) 매핑과 "정상 업데이터일 수도 있으니 조사 후 격상"이라는 보수적 설명이 나왔다 — LLM은 설명자, 판정 앵커는 결정론적 계층이라는 설계가 실제 모델 출력으로 확인된 사례.
+
 ### 4. eBPF collector가 성능/보안에 주는 영향은?
 성능: 벤치 기준 이벤트당 ~13–14µs로 execve 경로(fork+exec ~630µs)엔 +2%, connect 커널 경로엔 +31%지만 절대치가 같아 실 워크로드(초당 수백 이벤트)에선 CPU 1% 미만이고, ring buffer는 커널→유저 복사 1회에 reserve/commit이라 부분 이벤트가 나가지 않는다. 보안: eBPF 프로그램은 verifier가 종료·메모리 안전을 증명한 뒤에만 로드돼 커널 모듈보다 안전하고, root 없이 cap_bpf+cap_perfmon 최소권한으로 attach했다. 한계는 소비자가 느리면 ring buffer가 차서 커널이 이벤트를 드롭하는 점(백프레셔 없음)과 kprobe가 커널 심볼에 의존하는 점(CO-RE로 레이아웃 변화는 흡수, 심볼 삭제는 못 막음)이다. ([docs/BENCHMARK.md §4](docs/BENCHMARK.md))
 
