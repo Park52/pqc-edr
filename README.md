@@ -1,5 +1,8 @@
 # pqc-edr
 
+[![CI](https://github.com/Park52/pqc-edr/actions/workflows/ci.yml/badge.svg)](https://github.com/Park52/pqc-edr/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > **eBPF telemetry over a post-quantum (X25519 + ML-KEM) mTLS channel, triaged by an LLM.**
 > A learning-grade PoC exploring PQC-secured endpoint security — **not** a production EDR.
 
@@ -49,10 +52,12 @@
 | 엔드포인트: 다운로드→실행 체인 (LOTL), 리버스셸 툴 | 룰(임시경로 실행·nc) + 코릴레이션(같은 부모에서 curl 후 임시경로 실행 → Critical) | `analyzer/prefilter.cpp`, `correlator.cpp` |
 | 엔드포인트: C2 비콘 (비표준 포트 반복 아웃바운드) | 룰(공인 비표준 포트) + 코릴레이션(같은 목적지 반복 ≥3 → High) | `analyzer/correlator.cpp` |
 | LLM 오판·할루시네이션 | LLM 은 애매한 이벤트만 보고, 결정론적 근거(룰·코릴레이션)를 '정상'으로 뒤집지 못함; 호출 실패는 fail-safe | `analyzer/pipeline.cpp` |
+| LLM 프롬프트 인젝션 (comm/filename 에 지시문) | 제어문자 제거·길이 제한, `<event>` 구분자, "안의 지시 무시" 시스템 프롬프트 — **완화**이며 판정 앵커는 룰 | `analyzer/llm_client_claude.cpp` |
+| 커널에서 온 비정상 바이트열 (제어문자·잘못된 UTF-8) 로 로그 위조·데몬 크래시 | 이벤트 요약 시 제어문자 치환, JSON 직렬화는 U+FFFD 대체 | `analyzer/prefilter.cpp`, `alert.cpp` |
 | agent 가 root 권한 요구 → 침해 시 피해 확대 | `cap_bpf`+`cap_perfmon` 만으로 attach (kprobe PMU, tracefs 미사용) | `agent/bpf/collector.bpf.c` |
 
 **의도적으로 대응하지 않는 것**: root 공격자(agent 자체를 끌 수 있음), 커널 익스플로잇, 호스트의 신원 키 파일 탈취(파일 권한 0600 에 의존),
-DoS, 사이드채널(라이브러리에 위임), LLM 프롬프트 인젝션(comm/filename 에 지시문 삽입), 키 폐기·회전. → [INTERVIEW_NOTES Q5](INTERVIEW_NOTES.md)
+DoS, 사이드채널(라이브러리에 위임), 키 폐기·회전. LLM 프롬프트 인젝션은 완화만(완전 방어 아님). → [INTERVIEW_NOTES Q5](INTERVIEW_NOTES.md)
 
 ## 핵심 보안 설계와 근거
 
@@ -93,6 +98,7 @@ i7-9700K, Release. 상세·해석은 [docs/BENCHMARK.md](docs/BENCHMARK.md).
 ```bash
 bash scripts/build-liboqs.sh                    # 1) liboqs 로컬 빌드 (ML-KEM-768 + ML-DSA-65, sudo 불필요)
 cmake -S . -B build && cmake --build build      # 2) 전체 빌드
+ctest --test-dir build                          #    셀프테스트 5개 (크립토 4 + 분류 파이프라인 1)
 sudo setcap cap_bpf,cap_perfmon,cap_net_admin+ep build/agent/agent   # 3) (선택) 실 eBPF — 리빌드마다 재부여
 ```
 
@@ -199,6 +205,7 @@ docs/           설계·벤치마크·학습 문서
 
 - [`docs/handshake-design.md`](docs/handshake-design.md) — 핸드셰이크 상세 설계·근거·한계
 - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) — 고전 vs 하이브리드 비용, eBPF 오버헤드, 해석
+- [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — 5분 시연 대본, 예상 질문 매핑, 실패 시 폴백
 - [`INTERVIEW_NOTES.md`](INTERVIEW_NOTES.md) — 설계 결정 Q&A (하이브리드/ML-KEM/LLM 통제/eBPF 영향/프로덕션 갭)
 - [`docs/STUDY_GUIDE.md`](docs/STUDY_GUIDE.md) — eBPF·암호학 제로베이스 학습 가이드
 - [`ROADMAP.md`](ROADMAP.md) — 4주 계획과 범위 가드레일
@@ -210,7 +217,7 @@ docs/           설계·벤치마크·학습 문서
 - 인증서 체인/PKI (self-signed + 사전공유 공개키 핀닝으로 대체 — 키 회전·폐기 없음)
 - 프로덕션급 eBPF 커버리지 (훅 2개: execve, IPv4 connect)
 - 세션 재개·키 갱신·재연결·백프레셔 (analyzer 가 느리면 커널 ring buffer 가 이벤트를 드롭)
-- 사이드채널 방어(라이브러리에 위임), LLM 프롬프트 인젝션 방어
+- 사이드채널 방어(라이브러리에 위임), LLM 프롬프트 인젝션의 완전한 방어(정화·구분자·지시 무시로 완화만)
 
 솔직한 프로덕션 갭 목록은 [INTERVIEW_NOTES Q5](INTERVIEW_NOTES.md).
 
