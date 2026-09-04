@@ -58,6 +58,17 @@ PrefilterResult prefilter_tcp(const security_event &ev) {
 
 } // namespace
 
+// 커널에서 온 comm/filename 은 신뢰할 수 없는 바이트열 — 제어문자(개행 등)를 '?' 로 바꿔
+// 로그 줄 위조와 LLM 컨텍스트 오염을 소스에서 막는다. 길이는 스키마가 이미 제한(16B/128B).
+std::string printable(const char *s, size_t max_len) {
+    std::string out;
+    for (size_t i = 0; i < max_len && s[i] != '\0'; ++i) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        out += (c < 0x20 || c == 0x7f) ? '?' : static_cast<char>(c);
+    }
+    return out;
+}
+
 std::string basename_of(const char *path) {
     const char *slash = std::strrchr(path, '/');
     return slash ? std::string(slash + 1) : std::string(path);
@@ -84,13 +95,14 @@ PrefilterResult prefilter(const security_event &ev) {
 
 std::string event_summary(const security_event &ev) {
     char buf[256];
+    const std::string comm = printable(ev.comm, sizeof(ev.comm));
     if (ev.type == PQSEC_EVT_EXECVE) {
-        std::snprintf(buf, sizeof(buf), "execve comm=%s file=%s", ev.comm,
-                      ev.u.execve.filename);
+        const std::string file = printable(ev.u.execve.filename, sizeof(ev.u.execve.filename));
+        std::snprintf(buf, sizeof(buf), "execve comm=%s file=%s", comm.c_str(), file.c_str());
     } else if (ev.type == PQSEC_EVT_TCP_CONNECT) {
         char ip[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &ev.u.tcp.daddr, ip, sizeof(ip));
-        std::snprintf(buf, sizeof(buf), "connect comm=%s dst=%s:%u", ev.comm, ip,
+        std::snprintf(buf, sizeof(buf), "connect comm=%s dst=%s:%u", comm.c_str(), ip,
                       ev.u.tcp.dport);
     } else {
         std::snprintf(buf, sizeof(buf), "unknown type=%u", ev.type);

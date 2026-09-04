@@ -42,7 +42,8 @@ void emit_alert(const Alert &a) {
         {"event", a.event_summary},
         {"reason", a.reason},
     };
-    printf("%s\n", j.dump().c_str());
+    // 유효하지 않은 UTF-8 은 U+FFFD 로 대체 (dump 예외로 데몬이 죽지 않게)
+    printf("%s\n", j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace).c_str());
     fflush(stdout);
 
     // 사람이 읽는 요약 (stderr)
