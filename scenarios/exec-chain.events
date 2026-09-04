@@ -1,0 +1,17 @@
+# scenarios/exec-chain.events — 시나리오 1: 다운로드→실행 체인 (재생용)
+#
+# scripts/scenario-1-exec-chain.sh 가 eBPF 를 못 쓸 때(권한 없음) agent --replay 로 재생한다.
+# 실 eBPF 모드에서 잡히는 순서를 그대로 옮긴 것. ppid=5000 이 공격 스크립트(bash).
+#
+# 형식: execve <pid> <ppid> <comm> <filename>
+#       connect <pid> <ppid> <comm> <ipv4> <port>
+#       delay <ms>
+#                                                              기대 판정
+execve  5001 5000 bash      /usr/bin/mktemp                  # 스테이징 디렉토리   → drop (화이트리스트)
+execve  5002 5000 bash      /usr/bin/curl                    # 페이로드 "다운로드"  → LLM 의심 / 코릴레이터가 다운로더로 기억
+execve  5003 5000 bash      /usr/bin/chmod                   # +x                  → drop
+execve  5004 5000 bash      /tmp/.cache-Ab3x/sysupdate       # 임시경로 실행        → rule High + download-exec-chain → Critical
+execve  5005 5004 sysupdate /usr/bin/id                      # 정찰                → drop
+execve  5006 5004 sysupdate /usr/bin/nc                      # 네트워크 툴          → rule High
+connect 5006 5004 nc        198.51.100.7 4444                # C2 접속 시도 (1회)   → rule Medium
+execve  5007 5000 bash      /usr/bin/rm                      # 흔적 제거            → drop

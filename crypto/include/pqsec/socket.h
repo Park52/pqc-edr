@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 namespace pqsec {
 
@@ -21,14 +22,15 @@ public:
     explicit SocketError(const std::string &what) : std::runtime_error(what) {}
 };
 
-// 127.0.0.1:port 에 listen. port=0 이면 커널이 빈 포트 할당. listen fd 반환.
-int tcp_listen(uint16_t port);
+// bind_ip:port 에 listen (기본 127.0.0.1, 컨테이너 안에서는 "0.0.0.0").
+// port=0 이면 커널이 빈 포트 할당. listen fd 반환.
+int tcp_listen(uint16_t port, const std::string &bind_ip = "127.0.0.1");
 // 실제 바인딩된 포트 조회 (port=0 으로 listen 한 경우)
 uint16_t tcp_local_port(int listen_fd);
 // 한 연결 수락 → conn fd
 int tcp_accept(int listen_fd);
-// 127.0.0.1:port 로 접속 → conn fd
-int tcp_connect(uint16_t port);
+// host:port 로 접속 (host 는 IPv4 주소 또는 호스트명, 기본 127.0.0.1) → conn fd
+int tcp_connect(uint16_t port, const std::string &host = "127.0.0.1");
 void close_fd(int fd);
 
 // fd 위에서 핸드셰이크 프레임(4바이트 헤더)을 주고받는 Transport 생성

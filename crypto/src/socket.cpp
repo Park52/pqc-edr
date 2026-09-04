@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -54,17 +55,19 @@ bool read_all(int fd, uint8_t *p, size_t n) {
 
 } // namespace
 
-int tcp_listen(uint16_t port) {
+int tcp_listen(uint16_t port, const std::string &bind_ip) {
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    if (::inet_pton(AF_INET, bind_ip.c_str(), &addr.sin_addr) != 1)
+        throw SocketError("socket: 잘못된 bind 주소 " + bind_ip);
+    addr.sin_port = htons(port);
+
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
         fail("socket");
     int one = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port = htons(port);
     if (::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0)
         fail("bind");
     if (::listen(fd, 1) < 0)
@@ -87,16 +90,28 @@ int tcp_accept(int listen_fd) {
     return fd;
 }
 
-int tcp_connect(uint16_t port) {
+int tcp_connect(uint16_t port, const std::string &host) {
+    // IPv4 주소 또는 호스트명 해석 (컨테이너 네트워크의 서비스명도 허용)
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo *res = nullptr;
+    int rc = ::getaddrinfo(host.c_str(), nullptr, &hints, &res);
+    if (rc != 0 || !res)
+        throw SocketError("socket: 호스트 해석 실패 " + host + " (" + ::gai_strerror(rc) + ")");
+    sockaddr_in addr = *reinterpret_cast<const sockaddr_in *>(res->ai_addr);
+    ::freeaddrinfo(res);
+    addr.sin_port = htons(port);
+
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
         fail("socket");
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port = htons(port);
-    if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0)
+    if (::connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
+        int saved = errno;
+        ::close(fd);
+        errno = saved;
         fail("connect");
+    }
     return fd;
 }
 

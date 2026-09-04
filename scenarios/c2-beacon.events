@@ -1,0 +1,16 @@
+# scenarios/c2-beacon.events — 시나리오 2: 비정상 아웃바운드, C2 비콘 (재생용)
+#
+# scripts/scenario-2-c2-beacon.sh 가 eBPF 를 못 쓸 때 agent --replay 로 재생한다.
+# python3 implant 흉내: 같은 공인 목적지 비표준 포트로 0.7초 간격 반복 접속.
+# 198.51.100.7 은 문서용 예약 대역(TEST-NET-2) — 실제 호스트 없음.
+#                                                              기대 판정
+execve  6001 6000 bash    /usr/bin/python3                   # implant 기동         → LLM 의심(mock) → Sonnet
+connect 6001 6000 python3 198.51.100.7 4444                  # 1회                 → rule Medium
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444                  # 2회                 → rule Medium
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444                  # 3회 (임계)           → rule+beacon → High
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444                  # 4회                 → rule+beacon → High
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444                  # 5회                 → rule+beacon → High

@@ -4,6 +4,7 @@
 #include "alert.h"
 #include "prefilter.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace pqsec::analyzer {
@@ -23,9 +24,30 @@ Alert make_alert(const security_event &ev, const std::string &summary, Verdict v
 }
 } // namespace
 
-void process_event(const security_event &ev, LlmClient &llm) {
+void process_event(const security_event &ev, LlmClient &llm, Correlator &corr) {
     const std::string summary = event_summary(ev);
     const PrefilterResult pr = prefilter(ev);
+    const CorrelationHit ch = corr.observe(ev);
+
+    // 시퀀스 증거(코릴레이션)는 단일 이벤트 판정보다 강하다 — 결정론적 근거이므로 항상 alert.
+    if (ch.hit) {
+        if (pr.decision == PrefilterDecision::Alert) {
+            // 룰도 걸림 → LLM 없이 즉시. 심각도는 둘 중 높은 쪽.
+            emit_alert(make_alert(ev, summary, Verdict::Malicious,
+                                  std::max(pr.severity, ch.severity), "rule+" + ch.rule,
+                                  pr.reason + "; " + ch.reason));
+            return;
+        }
+        // 룰은 애매/정상 → Haiku 건너뛰고 Sonnet 심층 직행 (시퀀스 근거를 컨텍스트로 제공).
+        // LLM 은 설명·심각도 보정 역할이며, 결정론적 근거를 '정상'으로 뒤집지는 못한다.
+        Classification s = llm.deep_analyze(summary + " | correlation: " + ch.reason);
+        const Verdict v = (s.verdict == Verdict::Normal || s.verdict == Verdict::Unknown)
+                              ? Verdict::Suspicious
+                              : s.verdict;
+        emit_alert(make_alert(ev, summary, v, std::max(s.severity, ch.severity),
+                              ch.rule + "+sonnet", ch.reason + " / " + s.reason));
+        return;
+    }
 
     switch (pr.decision) {
     case PrefilterDecision::Drop:

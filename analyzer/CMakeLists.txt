@@ -10,6 +10,7 @@ add_library(analyzer_core STATIC
   src/alert.cpp
   src/llm_client.cpp
   src/llm_client_claude.cpp
+  src/correlator.cpp
   src/pipeline.cpp)
 target_include_directories(analyzer_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(analyzer_core PUBLIC pqsec_common pqsec_json CURL::libcurl)

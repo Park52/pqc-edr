@@ -12,33 +12,18 @@ namespace pqsec::analyzer {
 
 namespace {
 
-// 읽기 위주의 흔한 시스템 도구 — 명백 정상으로 간주(화이트리스트)
+// 읽기 위주의 흔한 시스템/파일 도구 — 명백 정상으로 간주(화이트리스트)
 const std::set<std::string> kBenignBins = {
     "ls",  "cat", "grep", "ps",   "id",   "whoami", "which", "uname", "wc",
     "head","tail","sed",  "awk",  "dirname","basename","env","date", "sleep",
     "git", "cmake","make", "cc",  "gcc",  "g++",   "clang", "ld",    "node",
+    "rm",  "mkdir","mktemp","cp", "mv",   "touch", "chmod", "getcap",
 };
 
 // 리버스셸·다운로더 등에 흔히 쓰이는 바이너리 — 명백 악성 신호
 const std::set<std::string> kMaliciousBins = {
     "nc", "ncat", "netcat", "socat",
 };
-
-std::string basename_of(const char *path) {
-    const char *slash = std::strrchr(path, '/');
-    return slash ? std::string(slash + 1) : std::string(path);
-}
-
-// daddr(네트워크 바이트오더 저장) 이 사설/루프백 대역인지 (리틀엔디안 호스트 가정)
-bool is_private_ipv4(uint32_t daddr_net) {
-    uint8_t o0 = daddr_net & 0xff;
-    uint8_t o1 = (daddr_net >> 8) & 0xff;
-    if (o0 == 10) return true;                       // 10.0.0.0/8
-    if (o0 == 127) return true;                      // 127.0.0.0/8 loopback
-    if (o0 == 192 && o1 == 168) return true;         // 192.168.0.0/16
-    if (o0 == 172 && o1 >= 16 && o1 <= 31) return true; // 172.16.0.0/12
-    return false;
-}
 
 PrefilterResult prefilter_execve(const security_event &ev) {
     std::string bin = basename_of(ev.u.execve.filename);
@@ -72,6 +57,21 @@ PrefilterResult prefilter_tcp(const security_event &ev) {
 }
 
 } // namespace
+
+std::string basename_of(const char *path) {
+    const char *slash = std::strrchr(path, '/');
+    return slash ? std::string(slash + 1) : std::string(path);
+}
+
+bool is_private_ipv4(uint32_t daddr_net) {
+    uint8_t o0 = daddr_net & 0xff;
+    uint8_t o1 = (daddr_net >> 8) & 0xff;
+    if (o0 == 10) return true;                          // 10.0.0.0/8
+    if (o0 == 127) return true;                         // 127.0.0.0/8 loopback
+    if (o0 == 192 && o1 == 168) return true;            // 192.168.0.0/16
+    if (o0 == 172 && o1 >= 16 && o1 <= 31) return true; // 172.16.0.0/12
+    return false;
+}
 
 PrefilterResult prefilter(const security_event &ev) {
     switch (ev.type) {
