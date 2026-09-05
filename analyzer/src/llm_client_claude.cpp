@@ -155,6 +155,10 @@ Classification ClaudeLlmClient::call(const std::string &model, const std::string
         c.severity = deep ? parse_severity(p.value("severity", "medium")) : Severity::Info;
         c.confidence = p.value("confidence", 0.0);
         c.reason = p.value("reason", "");
+        if (api.contains("usage")) { // 비용 집계용 토큰 수
+            c.input_tokens = api["usage"].value("input_tokens", 0ULL);
+            c.output_tokens = api["usage"].value("output_tokens", 0ULL);
+        }
         return c;
     } catch (const std::exception &e) {
         return fail_safe(model, std::string("응답 파싱 실패: ") + e.what());

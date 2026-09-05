@@ -9,6 +9,7 @@
 
 #include "alert.h" // Verdict, Severity
 
+#include <cstdint>
 #include <string>
 
 namespace pqsec::analyzer {
@@ -18,7 +19,9 @@ struct Classification {
     Severity severity = Severity::Info;
     double confidence = 0.0; // 0..1
     std::string reason;
-    std::string model; // 어떤 모델이 판정했는지
+    std::string model;          // 어떤 모델이 판정했는지
+    uint64_t input_tokens = 0;  // 실 API usage (비용 집계용). mock 은 0.
+    uint64_t output_tokens = 0;
 };
 
 class LlmClient {

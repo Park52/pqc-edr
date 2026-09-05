@@ -4,13 +4,16 @@
 // --forward      : PQC 채널로 analyzer 에 암호화 전송 (client 역할).
 // --synthetic    : eBPF 없이 내장 합성 이벤트 5건 (권한 불필요, CI/데모용 폴백).
 // --replay FILE  : eBPF 없이 이벤트 파일 재생 (위협 시나리오 폴백, scenarios/*.events).
+// --record FILE  : 실 eBPF 이벤트를 재생 포맷으로 기록 (평가 코퍼스 캡처). --replay 의 대칭.
 //
 //   agent                                   # Week 1 stdout
+//   agent --record capture.events           # 코퍼스 캡처 (capability 필요)
 //   agent --forward --id agent --peer analyzer.pub [--host 127.0.0.1] [--port 9443] [--queue 4096]
 //         [--synthetic | --replay FILE]
 
 #include "collector.skel.h"
 #include "event.h"
+#include "events_file.h"
 
 #include "pqsec/handshake.h"
 #include "pqsec/identity.h"
@@ -69,6 +72,40 @@ struct StdoutSink : EventSink {
         }
         fflush(stdout);
     }
+};
+
+// --record FILE: 이벤트를 재생 포맷(.events)으로 기록. 평가 코퍼스 캡처용.
+class RecordSink : public EventSink {
+public:
+    explicit RecordSink(const std::string &path) : out_(path) {
+        if (!out_)
+            throw std::runtime_error("기록 파일 열기 실패: " + path);
+        char ts[64];
+        time_t now = time(nullptr);
+        strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S%z", localtime(&now));
+        out_ << "# recorded by agent --record at " << ts << " (ts_ns 는 기록하지 않음 — 재생 시 시계 재부여)\n";
+    }
+    ~RecordSink() override {
+        out_.flush();
+        fprintf(stderr, "[agent] 기록 완료: %llu 이벤트\n", static_cast<unsigned long long>(n_));
+    }
+    void handle(const security_event &ev) override {
+        std::string line = events_file::format_line(ev);
+        if (line.empty())
+            return;
+        // 이벤트 간격을 delay 줄로 보존 (10ms 이상만) — 재생·평가 시 코릴레이션 윈도우가 실시간 의미를 유지
+        if (last_ts_ && ev.ts_ns > last_ts_ + 10'000'000ull)
+            out_ << "delay " << (ev.ts_ns - last_ts_) / 1'000'000ull << '\n';
+        last_ts_ = ev.ts_ns;
+        out_ << line << '\n';
+        if (++n_ % 100 == 0)
+            out_.flush(); // 비정상 종료 대비
+    }
+
+private:
+    std::ofstream out_;
+    uint64_t n_ = 0;
+    uint64_t last_ts_ = 0;
 };
 
 // --forward: security_event 를 암호화해 채널로 전송 — 백프레셔 처리.
@@ -246,58 +283,32 @@ static void run_synthetic(EventSink &sink) {
         sink.handle(e);
 }
 
-// 재생 파일 (scenarios/*.events). 한 줄 = 한 항목, '#' 이후는 주석.
-//   execve  <pid> <ppid> <comm> <filename>
-//   connect <pid> <ppid> <comm> <ipv4> <port>
-//   delay   <ms>
+// 재생 파일 (scenarios/*.events) — 포맷과 파서는 common/events_file.h (analyzer_eval 과 공유).
+// 이벤트에는 실제 단조시계(now_ns)를 찍고, delay 줄은 실제로 기다린다.
 // 형식 오류는 예외(fail-closed) — 잘못된 시나리오를 조용히 절반만 재생하지 않는다.
 static void run_replay(const std::string &path, EventSink &sink) {
     std::ifstream in(path);
     if (!in)
         throw std::runtime_error("재생 파일 열기 실패: " + path);
-
-    std::string line;
-    int lineno = 0, n = 0;
-    while (std::getline(in, line)) {
-        ++lineno;
-        std::istringstream is(line.substr(0, line.find('#')));
-        std::string kind;
-        if (!(is >> kind))
-            continue; // 빈 줄/주석
-        auto bad = [&](const char *why) {
-            throw std::runtime_error(path + ":" + std::to_string(lineno) + " " + why);
-        };
-
-        if (kind == "delay") {
-            long ms = -1;
-            if (!(is >> ms) || ms < 0)
-                bad("delay <ms> 형식 오류");
-            timespec ts{ms / 1000, (ms % 1000) * 1000000L};
+    int n = 0;
+    events_file::parse(in, path, [&](const events_file::Entry &e) {
+        switch (e.kind) {
+        case events_file::Entry::Kind::Delay: {
+            timespec ts{e.delay_ms / 1000, (e.delay_ms % 1000) * 1000000L};
             nanosleep(&ts, nullptr);
-            continue;
+            break;
         }
-
-        uint32_t pid = 0, ppid = 0;
-        std::string comm;
-        if (!(is >> pid >> ppid >> comm))
-            bad("<pid> <ppid> <comm> 형식 오류");
-
-        if (kind == "execve") {
-            std::string file;
-            if (!(is >> file))
-                bad("execve <filename> 누락");
-            sink.handle(syn_execve(comm.c_str(), file.c_str(), pid, ppid));
-        } else if (kind == "connect") {
-            std::string ip;
-            unsigned port = 0;
-            if (!(is >> ip >> port) || port > 65535)
-                bad("connect <ipv4> <port> 형식 오류");
-            sink.handle(syn_tcp(comm.c_str(), ip.c_str(), static_cast<uint16_t>(port), pid, ppid));
-        } else {
-            bad("알 수 없는 항목 종류");
+        case events_file::Entry::Kind::Event: {
+            security_event ev = e.ev;
+            ev.ts_ns = now_ns();
+            sink.handle(ev);
+            ++n;
+            break;
         }
-        ++n;
-    }
+        case events_file::Entry::Kind::Directive:
+            break; // 평가용 지시어 — agent 는 무시
+        }
+    });
     fprintf(stderr, "[agent] 재생 완료: %d 이벤트 (%s)\n", n, path.c_str());
 }
 
@@ -306,6 +317,7 @@ struct Options {
     bool forward = false;
     bool synthetic = false;
     std::string replay_file;
+    std::string record_file;
     std::string host = "127.0.0.1";
     uint16_t port = 9443;
     std::string id_prefix = "agent";
@@ -324,6 +336,7 @@ static Options parse_args(int argc, char **argv) {
         if (a == "--forward") o.forward = true;
         else if (a == "--synthetic") o.synthetic = true;
         else if (a == "--replay") o.replay_file = next("--replay");
+        else if (a == "--record") o.record_file = next("--record");
         else if (a == "--host") o.host = next("--host");
         else if (a == "--port") o.port = static_cast<uint16_t>(std::stoi(next("--port")));
         else if (a == "--queue") o.queue = static_cast<size_t>(std::stoul(next("--queue")));
@@ -337,6 +350,10 @@ static Options parse_args(int argc, char **argv) {
     }
     if (o.queue == 0) {
         fprintf(stderr, "--queue 는 1 이상\n");
+        std::exit(1);
+    }
+    if (!o.record_file.empty() && (o.forward || o.synthetic || !o.replay_file.empty())) {
+        fprintf(stderr, "--record 는 실 eBPF 수집 전용 (--forward/--synthetic/--replay 와 함께 쓸 수 없음)\n");
         std::exit(1);
     }
     return o;
@@ -361,8 +378,12 @@ int main(int argc, char **argv) {
     // 싱크 구성
     std::unique_ptr<EventSink> sink;
     try {
-        sink = o.forward ? make_forward_sink(o)
-                         : std::unique_ptr<EventSink>(new StdoutSink());
+        if (o.forward)
+            sink = make_forward_sink(o);
+        else if (!o.record_file.empty())
+            sink = std::make_unique<RecordSink>(o.record_file);
+        else
+            sink = std::make_unique<StdoutSink>();
     } catch (const std::exception &e) {
         fprintf(stderr, "[agent] 채널 연결 실패: %s\n", e.what());
         return 1;
@@ -407,7 +428,7 @@ int main(int argc, char **argv) {
     }
 
     fprintf(stderr, "[agent] collector 가동%s. Ctrl-C 종료.\n",
-            o.forward ? " (채널 전송)" : " (stdout)");
+            o.forward ? " (채널 전송)" : !o.record_file.empty() ? " (파일 기록)" : " (stdout)");
     while (!g_exiting) {
         int err = ring_buffer__poll(rb, 100);
         if (err == -EINTR)
