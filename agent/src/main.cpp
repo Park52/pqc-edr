@@ -6,7 +6,7 @@
 // --replay FILE  : eBPF 없이 이벤트 파일 재생 (위협 시나리오 폴백, scenarios/*.events).
 //
 //   agent                                   # Week 1 stdout
-//   agent --forward --id agent --peer analyzer.pub [--host 127.0.0.1] [--port 9443]
+//   agent --forward --id agent --peer analyzer.pub [--host 127.0.0.1] [--port 9443] [--queue 4096]
 //         [--synthetic | --replay FILE]
 
 #include "collector.skel.h"
@@ -19,16 +19,23 @@
 #include <bpf/libbpf.h>
 
 #include <arpa/inet.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 using namespace pqsec;
 
@@ -64,33 +71,126 @@ struct StdoutSink : EventSink {
     }
 };
 
-// --forward: security_event 를 암호화해 채널로 전송
+// --forward: security_event 를 암호화해 채널로 전송 — 백프레셔 처리.
+//
+//   ring buffer 콜백(handle) ──복사──▶ 유한 큐 ──▶ 송신 스레드: seal + send
+//
+// - handle() 은 절대 블록하지 않는다. analyzer 가 느려(예: 실 LLM 호출 수백 ms) 소켓 버퍼와 큐가
+//   차면 커널 ring buffer 폴링을 막는 대신 **유저스페이스에서 드롭하고 개수를 센다.**
+//   (커널 드롭은 보이지 않지만 여기 드롭은 셀 수 있다.)
+// - RecordSender 의 seq 는 송신 스레드만 만지므로 레코드 순서·nonce 가 흔들리지 않는다.
+// - 정체가 풀리면 드롭 수를 PQSEC_EVT_AGENT_DROP 이벤트로 analyzer 에 통지한다 —
+//   유실은 조용히 넘기지 않는다(analyzer 가 "탐지 공백" alert 로 surface).
+// - 종료 시 큐를 드레인한 뒤 fd 를 닫는다. 전송 실패(analyzer 사망)는 즉시 종료.
 class ChannelSink : public EventSink {
 public:
-    ChannelSink(int fd, RecordSender sender) : fd_(fd), sender_(std::move(sender)) {}
-    ~ChannelSink() override { close_fd(fd_); } // EOF → analyzer 수신 종료
+    ChannelSink(int fd, RecordSender sender, size_t capacity)
+        : fd_(fd), sender_(std::move(sender)), capacity_(capacity),
+          thread_([this] { run(); }) {}
+
+    ~ChannelSink() override {
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            stop_ = true;
+        }
+        cv_.notify_all();
+        thread_.join(); // 남은 큐 전송 후 종료
+        close_fd(fd_);  // EOF → analyzer 수신 종료
+        fprintf(stderr, "[agent] 전송 통계: sent=%llu dropped=%llu queue_peak=%zu/%zu\n",
+                static_cast<unsigned long long>(sent_), static_cast<unsigned long long>(dropped_),
+                peak_, capacity_);
+    }
+
+    // ring buffer 콜백 스레드 — 큐에 복사 or 드롭, 블록 없음
     void handle(const security_event &ev) override {
+        std::lock_guard<std::mutex> lk(m_);
         if (broken_)
             return;
-        const uint8_t *p = reinterpret_cast<const uint8_t *>(&ev);
-        try {
-            Bytes rec = sender_.seal(Bytes(p, p + sizeof(ev)));
-            send_record(fd_, rec);
-        } catch (const std::exception &e) {
-            // ring buffer 콜백은 libbpf(C) 프레임 안에서 불리므로 예외를 밖으로 던지지 않는다.
-            fprintf(stderr, "[agent] 채널 전송 실패, 종료: %s\n", e.what());
-            broken_ = true;
-            g_exiting = 1;
+        if (q_.size() >= capacity_) {
+            ++dropped_;
+            ++dropped_pending_;
             return;
         }
-        fprintf(stderr, "[agent] 이벤트 암호화 전송 (%s)\n",
-                ev.type == PQSEC_EVT_EXECVE ? "execve" : "connect");
+        q_.push_back(ev);
+        peak_ = std::max(peak_, q_.size());
+        cv_.notify_one();
     }
 
 private:
+    void run() {
+        for (;;) {
+            security_event ev{};
+            uint64_t report = 0, report_total = 0;
+            {
+                std::unique_lock<std::mutex> lk(m_);
+                cv_.wait(lk, [&] { return stop_ || !q_.empty(); });
+                if (q_.empty())
+                    return; // stop_ 이고 드레인 완료
+                ev = q_.front();
+                q_.pop_front();
+                // 드롭이 있었고 큐가 절반 이하로 내려왔으면(정체 해소) 통지 1건을 끼운다
+                if (dropped_pending_ > 0 && q_.size() <= capacity_ / 2) {
+                    report = dropped_pending_;
+                    report_total = dropped_;
+                    dropped_pending_ = 0;
+                }
+            }
+            if (!send_one(ev))
+                return;
+            if (report > 0 && !send_one(make_drop_notice(report, report_total)))
+                return;
+        }
+    }
+
+    bool send_one(const security_event &ev) {
+        const uint8_t *p = reinterpret_cast<const uint8_t *>(&ev);
+        try {
+            send_record(fd_, sender_.seal(Bytes(p, p + sizeof(ev))));
+        } catch (const std::exception &e) {
+            fprintf(stderr, "[agent] 채널 전송 실패, 종료: %s\n", e.what());
+            std::lock_guard<std::mutex> lk(m_);
+            broken_ = true;
+            g_exiting = 1;
+            return false;
+        }
+        ++sent_;
+        if (ev.type == PQSEC_EVT_AGENT_DROP)
+            fprintf(stderr, "[agent] 백프레셔 드롭 통지 전송: %llu개 유실 (누적 %llu)\n",
+                    static_cast<unsigned long long>(ev.u.drop.dropped),
+                    static_cast<unsigned long long>(ev.u.drop.dropped_total));
+        else
+            fprintf(stderr, "[agent] 이벤트 암호화 전송 (%s)\n",
+                    ev.type == PQSEC_EVT_EXECVE ? "execve" : "connect");
+        return true;
+    }
+
+    security_event make_drop_notice(uint64_t dropped, uint64_t dropped_total) const {
+        security_event e{};
+        e.type = PQSEC_EVT_AGENT_DROP;
+        e.pid = static_cast<uint32_t>(getpid());
+        e.ts_ns = now_ns();
+        std::strncpy(e.comm, "agent", sizeof(e.comm) - 1);
+        e.u.drop.dropped = dropped;
+        e.u.drop.dropped_total = dropped_total;
+        e.u.drop.sent_total = sent_;
+        return e;
+    }
+
     int fd_;
-    RecordSender sender_;
+    RecordSender sender_;  // 송신 스레드 전용
+    size_t capacity_;
+
+    std::mutex m_;
+    std::condition_variable cv_;
+    std::deque<security_event> q_;
+    bool stop_ = false;
     bool broken_ = false;
+    uint64_t dropped_ = 0;         // 누적 드롭 (lock)
+    uint64_t dropped_pending_ = 0; // 아직 통지하지 않은 드롭 (lock)
+    size_t peak_ = 0;              // 큐 최대 점유 (lock)
+    uint64_t sent_ = 0;            // 송신 스레드 전용
+
+    std::thread thread_; // 마지막에 선언 — 위 멤버가 모두 초기화된 뒤 시작
 };
 
 // ---- ring buffer 콜백 → 싱크 ----------------------------------------------
@@ -210,6 +310,7 @@ struct Options {
     uint16_t port = 9443;
     std::string id_prefix = "agent";
     std::string peer_pub = "analyzer.pub";
+    size_t queue = 4096; // 송신 큐 용량(이벤트 수). 168B × 4096 ≈ 690KB
 };
 
 static Options parse_args(int argc, char **argv) {
@@ -225,12 +326,17 @@ static Options parse_args(int argc, char **argv) {
         else if (a == "--replay") o.replay_file = next("--replay");
         else if (a == "--host") o.host = next("--host");
         else if (a == "--port") o.port = static_cast<uint16_t>(std::stoi(next("--port")));
+        else if (a == "--queue") o.queue = static_cast<size_t>(std::stoul(next("--queue")));
         else if (a == "--id") o.id_prefix = next("--id");
         else if (a == "--peer") o.peer_pub = next("--peer");
         else { fprintf(stderr, "알 수 없는 인자: %s\n", a.c_str()); std::exit(1); }
     }
     if (o.synthetic && !o.replay_file.empty()) {
         fprintf(stderr, "--synthetic 과 --replay 는 동시에 쓸 수 없음\n");
+        std::exit(1);
+    }
+    if (o.queue == 0) {
+        fprintf(stderr, "--queue 는 1 이상\n");
         std::exit(1);
     }
     return o;
@@ -244,7 +350,7 @@ static std::unique_ptr<EventSink> make_forward_sink(const Options &o) {
     Channel ch = client_handshake(id, t); // 실패 시 예외
     fprintf(stderr, "[agent] 핸드셰이크 완료 (analyzer %s:%u 인증됨). 이벤트 전송 시작.\n",
             o.host.c_str(), o.port);
-    return std::make_unique<ChannelSink>(fd, std::move(ch.sender));
+    return std::make_unique<ChannelSink>(fd, std::move(ch.sender), o.queue);
 }
 
 int main(int argc, char **argv) {

@@ -52,6 +52,7 @@
 | 엔드포인트: 다운로드→실행 체인 (LOTL), 리버스셸 툴 | 룰(임시경로 실행·nc) + 코릴레이션(같은 부모에서 curl 후 임시경로 실행 → Critical) | `analyzer/prefilter.cpp`, `correlator.cpp` |
 | 엔드포인트: C2 비콘 (비표준 포트 반복 아웃바운드) | 룰(공인 비표준 포트) + 코릴레이션(같은 목적지 반복 ≥3 → High) | `analyzer/correlator.cpp` |
 | LLM 오판·할루시네이션 | LLM 은 애매한 이벤트만 보고, 결정론적 근거(룰·코릴레이션)를 '정상'으로 뒤집지 못함; 호출 실패는 fail-safe | `analyzer/pipeline.cpp` |
+| analyzer 정체 → 이벤트가 조용히 유실 | agent 유한 큐 + 드롭 카운트 + `AGENT_DROP` 통지 → analyzer 가 탐지 공백을 alert 로 기록 | `agent/src/main.cpp` `ChannelSink` |
 | LLM 프롬프트 인젝션 (comm/filename 에 지시문) | 제어문자 제거·길이 제한, `<event>` 구분자, "안의 지시 무시" 시스템 프롬프트 — **완화**이며 판정 앵커는 룰 | `analyzer/llm_client_claude.cpp` |
 | 커널에서 온 비정상 바이트열 (제어문자·잘못된 UTF-8) 로 로그 위조·데몬 크래시 | 이벤트 요약 시 제어문자 치환, JSON 직렬화는 U+FFFD 대체 | `analyzer/prefilter.cpp`, `alert.cpp` |
 | agent 가 root 권한 요구 → 침해 시 피해 확대 | `cap_bpf`+`cap_perfmon` 만으로 attach (kprobe PMU, tracefs 미사용) | `agent/bpf/collector.bpf.c` |
@@ -70,6 +71,10 @@ DoS, 사이드채널(라이브러리에 위임), 키 폐기·회전. LLM 프롬�
   차단**. PSK 대신 서명을 쓴 이유: 한쪽 유출이 상대 신원 위조로 번지지 않고, 공개키만 배포하면 된다.
 - **AES-256-GCM record layer** — TLS 1.3 식 nonce(`iv_base ⊕ seq`)로 nonce 재사용 원천 차단, 변조·재정렬·재전송 모두 거부.
 - **Fail-closed 전반** — 크립토·파싱·재생파일 형식 오류는 조용히 넘기지 않고 즉시 예외/거부.
+- **백프레셔 — 유실을 세고 알린다** — agent 의 ring buffer 콜백은 유한 큐(기본 4096 이벤트)에 복사만 하고
+  송신 스레드가 seal+send. analyzer 가 느려 큐가 차면 커널을 막는 대신 유저스페이스에서 드롭하고 **개수를 센 뒤**
+  정체가 풀리면 `AGENT_DROP` 이벤트로 통지 → analyzer 가 "탐지 공백" alert 로 surface. 스트레스(analyzer 1.5초 정지,
+  20만 이벤트): 178,563 드롭·21,438 전송, analyzer 가 정확히 21,438 복호 (순서·nonce 무결).
 - **최소권한 eBPF** — `ksyscall`(kprobe PMU) attach 로 root 없이 `CAP_BPF`/`CAP_PERFMON` 만으로 동작.
 - **LLM 통제 3단** — ① 룰 프리필터(명백한 것은 LLM 없이) → ② 시퀀스 코릴레이션(순서·반복은 결정론적으로) → ③ 애매한 것만
   `claude-haiku-4-5` 1차 → 의심만 `claude-sonnet-5` 심층. LLM 은 설명·심각도 보정 역할이며 판정의 앵커는 룰이다.
@@ -216,7 +221,7 @@ docs/           설계·벤치마크·학습 문서
 - 완전한 TLS 1.3 재구현 (핸드셰이크는 축약판, 형식 검증 없음)
 - 인증서 체인/PKI (self-signed + 사전공유 공개키 핀닝으로 대체 — 키 회전·폐기 없음)
 - 프로덕션급 eBPF 커버리지 (훅 2개: execve, IPv4 connect)
-- 세션 재개·키 갱신·재연결·백프레셔 (analyzer 가 느리면 커널 ring buffer 가 이벤트를 드롭)
+- 세션 재개·키 갱신·재연결·디스크 큐 (백프레셔는 유한 큐로 드롭을 세고 알리지만, 끊긴 연결을 다시 잇거나 유실분을 보관하지는 않음)
 - 사이드채널 방어(라이브러리에 위임), LLM 프롬프트 인젝션의 완전한 방어(정화·구분자·지시 무시로 완화만)
 
 솔직한 프로덕션 갭 목록은 [INTERVIEW_NOTES Q5](INTERVIEW_NOTES.md).

@@ -94,8 +94,10 @@ ring buffer reserve/commit + 유저스페이스 소비(stdout→/dev/null).
 - **절대치는 이벤트당 ~13–14µs 로 두 훅이 비슷하다.** 상대 비율이 다른 건 baseline 차이 —
   fork+exec 은 원래 ~630µs 라 +2%, loopback connect 는 ~42µs 라 +31% 로 보인다.
 - 실 워크로드(초당 수백 이벤트)에선 CPU 1% 미만. 초당 수만 execve 를 하는 빌드 서버라면 수 % 까지 갈 수 있다.
-- 채널 전송 모드에선 여기에 AES-GCM 1µs + 소켓 send 가 더해지고, **analyzer 가 느리면(LLM 호출 수백 ms)
-  TCP 백프레셔 → agent 의 ring buffer 폴링이 막혀 커널이 이벤트를 드롭**한다. 큐잉/비동기 전송은 프로덕션 과제.
+- 채널 전송 모드에선 여기에 AES-GCM 1µs + 소켓 send 가 더해진다. analyzer 가 느리면(LLM 호출 수백 ms) TCP
+  백프레셔가 걸리는데, agent 는 ring buffer 콜백을 막지 않고 **유한 큐(기본 4096)에서 드롭을 세어 통지**한다.
+  스트레스(analyzer SIGSTOP 1.5초, 20만 이벤트): 178,563 드롭 / 21,438 전송, analyzer 복호 21,438 (정합).
+  디스크 큐·재연결은 없다 — 유실을 "보이게" 할 뿐 막지는 못한다.
 - 노이즈 있는 단일 머신 측정이다. 방향성 지표로만 볼 것.
 
 ## 한계

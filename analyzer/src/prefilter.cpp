@@ -104,6 +104,11 @@ std::string event_summary(const security_event &ev) {
         inet_ntop(AF_INET, &ev.u.tcp.daddr, ip, sizeof(ip));
         std::snprintf(buf, sizeof(buf), "connect comm=%s dst=%s:%u", comm.c_str(), ip,
                       ev.u.tcp.dport);
+    } else if (ev.type == PQSEC_EVT_AGENT_DROP) {
+        std::snprintf(buf, sizeof(buf), "agent-drop dropped=%llu total=%llu sent=%llu",
+                      static_cast<unsigned long long>(ev.u.drop.dropped),
+                      static_cast<unsigned long long>(ev.u.drop.dropped_total),
+                      static_cast<unsigned long long>(ev.u.drop.sent_total));
     } else {
         std::snprintf(buf, sizeof(buf), "unknown type=%u", ev.type);
     }

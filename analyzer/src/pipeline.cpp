@@ -26,6 +26,18 @@ Alert make_alert(const security_event &ev, const std::string &summary, Verdict v
 
 void process_event(const security_event &ev, LlmClient &llm, Correlator &corr) {
     const std::string summary = event_summary(ev);
+
+    // agent 백프레셔 통지: 이 구간에 탐지 공백이 있었다는 사실을 alert 로 surface (조용히 넘기지 않음)
+    if (ev.type == PQSEC_EVT_AGENT_DROP) {
+        char buf[240];
+        std::snprintf(buf, sizeof(buf),
+                      "agent 백프레셔 드롭: 이 구간에서 %llu개 이벤트 유실 (누적 %llu, 전송 %llu) — 탐지 공백 가능",
+                      static_cast<unsigned long long>(ev.u.drop.dropped),
+                      static_cast<unsigned long long>(ev.u.drop.dropped_total),
+                      static_cast<unsigned long long>(ev.u.drop.sent_total));
+        emit_alert(make_alert(ev, summary, Verdict::Unknown, Severity::Medium, "agent", buf));
+        return;
+    }
     const PrefilterResult pr = prefilter(ev);
     const CorrelationHit ch = corr.observe(ev);
 

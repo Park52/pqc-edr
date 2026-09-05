@@ -569,7 +569,21 @@ Claude API 는 **HTTPS 위의 REST API** 다: `https://api.anthropic.com/v1/mess
 - **오버헤드 측정 설계**: baseline(agent 없음) 대비 차이를 이벤트 수로 나눠 "이벤트당 µs"로 환산. 상대비율(+2% vs
   +31%)은 baseline 크기에 좌우되므로 절대치(둘 다 ~13µs)를 같이 본다.
 
-### 9.6 테스트를 묶는 법 — ctest 와 CI
+### 9.6 백프레셔 — 생산자가 소비자보다 빠를 때 (`agent/src/main.cpp` `ChannelSink`)
+- 문제: eBPF 는 초당 수천 이벤트를 낼 수 있는데 analyzer 는 LLM 호출 하나에 수백 ms 걸린다. 그대로 두면 TCP
+  버퍼가 차고 `send()` 가 블록 → ring buffer 콜백이 멈춤 → **커널 ring buffer 가 조용히 이벤트를 버린다**
+  (reserve 실패, 우리 눈엔 안 보임).
+- 해법 = **생산자/소비자 분리 + 유한 큐**: 콜백은 큐에 복사만 하고(µs), 별도 송신 스레드가 seal+send. 큐가 차면
+  유저스페이스에서 드롭하고 **개수를 센다**. 유실을 못 막을 때 차선은 "얼마나 잃었는지 아는 것".
+- 왜 큐를 무한으로 안 하나: 메모리가 터진다. 왜 블록 안 하나: 그러면 커널 드롭으로 되돌아간다.
+- 드롭이 있었으면 정체가 풀린 뒤 `AGENT_DROP` 이벤트를 채널로 보내 analyzer 가 "탐지 공백" alert 를 남긴다 —
+  fail-safe 의 "조용히 넘기지 않는다"를 유실에도 적용한 것.
+- 동기화: `std::mutex` + `std::condition_variable` + `std::deque`. `RecordSender`(seq/nonce)는 송신 스레드만
+  만져서 잠금 없이 순서가 보장된다. 소멸자에서 `stop_` → `join()` 으로 큐를 드레인한 뒤 fd 를 닫는다.
+- 검증 방법이 재미있다: analyzer 를 `kill -STOP` 으로 1.5초 얼리고 20만 이벤트를 쏜다 → 178,563 드롭, 21,438 전송,
+  analyzer 가 정확히 21,438 복호. 숫자가 맞으면 순서·nonce·드레인이 모두 맞은 것.
+
+### 9.7 테스트를 묶는 법 — ctest 와 CI
 - 셀프테스트 실행파일들은 검증 실패 시 non-zero 로 종료한다. CMake `add_test` 로 등록하면 `ctest` 한 줄로 전부 돈다.
 - GitHub Actions(`.github/workflows/ci.yml`)는 푸시마다 리눅스 러너에서 liboqs 빌드(캐시) → 빌드 → ctest → Docker
   이미지 빌드를 돌린다. eBPF agent 는 러너 커널의 BTF 에 의존해 제외 — "왜 CI 에 agent 가 없나"의 답.

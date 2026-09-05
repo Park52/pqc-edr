@@ -22,6 +22,7 @@
 enum pqsec_event_type {
     PQSEC_EVT_EXECVE      = 1,
     PQSEC_EVT_TCP_CONNECT = 2,
+    PQSEC_EVT_AGENT_DROP  = 3,  /* agent 유저스페이스 생성: 백프레셔로 유실된 이벤트 수 통지 */
 };
 
 /* IPv4 아웃바운드 커넥션 시도 */
@@ -37,6 +38,14 @@ struct pqsec_execve_event {
     char filename[PQSEC_FILENAME_LEN];
 };
 
+/* agent 백프레셔 드롭 통지 (커널이 아니라 agent 유저스페이스가 만든다).
+ * analyzer 가 느려 송신 큐가 찼을 때 버린 이벤트 수 — 유실을 조용히 넘기지 않기 위한 것. */
+struct pqsec_drop_event {
+    __u64 dropped;        /* 이번 통지 구간에서 유실된 이벤트 수 */
+    __u64 dropped_total;  /* agent 시작 이후 누적 유실 */
+    __u64 sent_total;     /* agent 시작 이후 누적 전송 (이 통지 직전까지) */
+};
+
 /* ring buffer 로 전달되는 단일 이벤트 레코드 */
 struct security_event {
     __u32 type;                 /* enum pqsec_event_type */
@@ -48,6 +57,7 @@ struct security_event {
     union {
         struct pqsec_execve_event execve;
         struct pqsec_tcp_event    tcp;
+        struct pqsec_drop_event   drop;
     } u;
 };
 
