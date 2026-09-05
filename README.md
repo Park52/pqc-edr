@@ -10,6 +10,8 @@
 암호로 보호되는 상호인증 채널**로 컨테이너 안의 analyzer 에 보내고, 룰·시퀀스 코릴레이션·LLM 이
 이상행위를 분류·설명하는 통합 파이프라인.
 
+![demo: 시나리오 1(다운로드→실행 체인) → 시나리오 2(C2 비콘), 실 eBPF 수집 → PQC 채널 → 룰·코릴레이션 alert](docs/demo.gif)
+
 > ⚠️ **범위**: 학습·포트폴리오용 PoC. 완전한 TLS/PKI 재구현이나 프로덕션급 커버리지가 아니라,
 > **세 축(eBPF · PQC · LLM)이 하나로 관통하는 통합**이 핵심 가치. 한계는 [아래](#범위와-한계)에 명시.
 
@@ -154,6 +156,8 @@ USE_REAL_LLM=1 ANTHROPIC_API_KEY=sk-… scripts/scenario-2-c2-beacon.sh   # mock
 단일 이벤트만 보는 LLM 은 `curl` 하나를 정상(0.95)으로 판정하지만, 시퀀스 코릴레이션이 체인을 Critical 로 잡는다 —
 **LLM 이 아니라 결정론적 계층이 판정의 앵커**인 이유. 코릴레이션 hit 가 Sonnet 으로 직행하면 MITRE ATT&CK 매핑이 붙은,
 과잉 확신 없는 설명이 나온다.
+
+위 GIF 는 `scripts/record-demo.sh` 로 녹화·변환한 것(asciinema + agg, `docs/demo.cast` 에서 재렌더 가능).
 
 ### Docker — analyzer 컨테이너, agent 는 호스트 (Week 4)
 
