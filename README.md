@@ -223,6 +223,7 @@ docs/           설계·벤치마크·학습 문서
 - [`docs/BENCHMARK.md`](docs/BENCHMARK.md) — 고전 vs 하이브리드 비용, eBPF 오버헤드, 해석
 - [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) — 5분 시연 대본, 예상 질문 매핑, 실패 시 폴백
 - [`docs/EVAL.md`](docs/EVAL.md) — 탐지 평가: 층별 오탐률·시나리오 탐지율·LLM 비용, known-miss, 튜닝 로그
+- [`docs/HANDBOOK.md`](docs/HANDBOOK.md) — **지식·면접 핸드북**: 전 영역 개념·구현·수치·함정·Q&A를 한 파일에 (출퇴근용)
 - [`INTERVIEW_NOTES.md`](INTERVIEW_NOTES.md) — 설계 결정 Q&A (하이브리드/ML-KEM/LLM 통제/eBPF 영향/프로덕션 갭)
 - [`docs/STUDY_GUIDE.md`](docs/STUDY_GUIDE.md) — eBPF·암호학 제로베이스 학습 가이드
 - [`ROADMAP.md`](ROADMAP.md) — 4주 계획과 범위 가드레일
