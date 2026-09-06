@@ -1,0 +1,7 @@
+# 공격 시나리오: 자격증명 탈취 정찰 — cat /etc/shadow 등.
+# known-miss: 프리필터는 실행 파일명만 보고 인자를 못 본다. cat 은 화이트리스트라 Drop → 완전 미탐.
+# 정직한 사각지대 기록. (해결하려면 execve 인자 캡처가 필요 — 훅 확장 과제.)
+#! known-miss: 화이트리스트가 인자를 못 봄 — cat /etc/shadow 가 cat 실행으로만 보여 Drop
+execve  9101 9100 bash whoami        # expect:drop
+execve  9102 9100 bash /usr/bin/cat  # expect:alert  — 실제로는 /etc/shadow 읽음, 우리는 못 봄 → Drop(미탐)
+execve  9103 9100 bash /usr/bin/cat  # expect:alert  — /etc/passwd

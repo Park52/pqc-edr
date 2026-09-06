@@ -1,0 +1,6 @@
+# 공격 시나리오: bash /dev/tcp 리버스셸 (nc/ncat 없이).
+# nc 블랙리스트를 우회하지만 공인 비표준 포트 아웃바운드는 rule Medium 으로 잡힌다.
+# known-miss: 단일 아웃바운드는 Medium 에 그쳐 High(확신 차단) 문턱을 못 넘는다 — 반복하면 beacon 으로 승격.
+#! known-miss: /dev/tcp 단일 리버스셸은 rule Medium — nc 없이 High 로는 못 올림 (반복 시 beacon)
+execve  9002 9000 bash   /usr/bin/bash             # expect:drop   — bash -i (LLM 영역)
+connect 9002 9000 bash   185.220.101.5 9001        # expect:alert  — 공인 비표준 포트 → rule Medium

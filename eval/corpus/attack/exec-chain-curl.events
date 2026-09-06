@@ -1,0 +1,10 @@
+# 공격 시나리오: 다운로드→실행 체인 (curl, /tmp). scenarios/exec-chain.events 와 동일 + 라벨.
+#! expect-max-severity: critical
+execve  5001 5000 bash      /usr/bin/mktemp              # expect:drop
+execve  5002 5000 bash      /usr/bin/curl                # expect:drop   — 단독 curl 은 정상 (LLM 판단 영역)
+execve  5003 5000 bash      /usr/bin/chmod               # expect:drop
+execve  5004 5000 bash      /tmp/.cache-Ab3x/sysupdate   # expect:alert  — 임시경로 실행 + 체인
+execve  5005 5004 sysupdate /usr/bin/id                  # expect:drop
+execve  5006 5004 sysupdate /usr/bin/nc                  # expect:alert
+connect 5006 5004 nc        198.51.100.7 4444            # expect:alert
+execve  5007 5000 bash      /usr/bin/rm                  # expect:drop

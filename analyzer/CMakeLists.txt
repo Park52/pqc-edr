@@ -20,6 +20,12 @@ add_executable(analyzer_selftest src/analyzer_selftest.cpp)
 target_link_libraries(analyzer_selftest PRIVATE analyzer_core)
 add_test(NAME analyzer.selftest COMMAND analyzer_selftest)  # 룰·코릴레이션·티어링 (mock LLM)
 
+# 탐지 평가 하네스: 라벨 코퍼스 → 층별 오탐/탐지/비용 (docs/EVAL.md). --gate 는 ctest 회귀 게이트.
+add_executable(analyzer_eval src/eval.cpp)
+target_link_libraries(analyzer_eval PRIVATE analyzer_core)
+add_test(NAME analyzer.eval_gate
+         COMMAND analyzer_eval --attack ${CMAKE_SOURCE_DIR}/eval/corpus/attack --llm mock --gate)
+
 # 실 Claude API 경로 수동 점검 (ANTHROPIC_API_KEY 필요)
 add_executable(llm_probe src/llm_probe.cpp)
 target_link_libraries(llm_probe PRIVATE analyzer_core)

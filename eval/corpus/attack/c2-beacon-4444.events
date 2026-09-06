@@ -1,0 +1,13 @@
+# 공격 시나리오: C2 비콘 — 공인 비표준 포트(4444) 로 주기적 반복 접속.
+# 1~2회는 rule Medium, 3회째부터 코릴레이션(beacon)이 High 로 승격.
+#! expect-max-severity: high
+execve  6001 6000 bash    /usr/bin/python3        # expect:drop  — implant 기동(LLM 영역)
+connect 6001 6000 python3 198.51.100.7 4444       # expect:alert — 1회: rule Medium
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444       # expect:alert — 2회: rule Medium
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444       # expect:alert — 3회: rule+beacon High
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444       # expect:alert — 4회
+delay 700
+connect 6001 6000 python3 198.51.100.7 4444       # expect:alert — 5회

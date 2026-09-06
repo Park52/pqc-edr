@@ -1,0 +1,8 @@
+# 공격 시나리오: 다운로드→실행 체인 변형 — wget, /dev/shm 스테이징, 실행 파일명은 무해해 보이게.
+# 룰(/dev/shm 실행)과 코릴레이션(같은 부모에서 wget 직후 실행)이 curl/tmp 말고도 일반화되는지 검증.
+#! expect-max-severity: critical
+execve  5101 5100 bash      /usr/bin/wget                    # expect:drop   — 단독 wget 은 정상(LLM 영역)
+execve  5102 5100 bash      /usr/bin/chmod                   # expect:drop
+execve  5103 5100 bash      /dev/shm/.systemd-private/agent  # expect:alert  — /dev/shm 실행 + 체인 → Critical
+execve  5104 5103 agent     /usr/bin/uname                   # expect:drop
+connect 5104 5103 agent     45.9.148.99 8080                 # expect:alert  — 공인 비표준 포트

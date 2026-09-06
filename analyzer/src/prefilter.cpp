@@ -18,6 +18,9 @@ const std::set<std::string> kBenignBins = {
     "head","tail","sed",  "awk",  "dirname","basename","env","date", "sleep",
     "git", "cmake","make", "cc",  "gcc",  "g++",   "clang", "ld",    "node",
     "rm",  "mkdir","mktemp","cp", "mv",   "touch", "chmod", "getcap",
+    // 아래는 탐지 평가(docs/EVAL.md)의 정상 코퍼스에서 LLM 오탐원으로 나와 추가 —
+    // 빌드·읽기 위주 시스템 도구. (measure → tune → re-measure)
+    "gmake", "ss", "ldconfig", "ctest", "dirname",
 };
 
 // 리버스셸·다운로더 등에 흔히 쓰이는 바이너리 — 명백 악성 신호

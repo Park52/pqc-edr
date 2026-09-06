@@ -1,0 +1,11 @@
+# 공격 시나리오: C2 비콘 — 공인 표준 포트(443) 로 위장. 룰은 이걸 못 잡는다(정상 웹처럼 보임 → Escalate).
+# 코릴레이션(같은 목적지 반복)만이 3회째에 beacon 으로 잡아 Sonnet 직행 → alert.
+# "룰로는 안 되고 시퀀스로만 잡히는" 경우의 대표.
+#! expect-max-severity: high
+connect 6011 6010 updater 203.0.113.9 443         # expect:drop  — 1회: 정상 업데이터처럼 보임
+delay 800
+connect 6011 6010 updater 203.0.113.9 443         # expect:drop  — 2회
+delay 800
+connect 6011 6010 updater 203.0.113.9 443         # expect:alert — 3회: beacon → correlation+sonnet
+delay 800
+connect 6011 6010 updater 203.0.113.9 443         # expect:alert — 4회
