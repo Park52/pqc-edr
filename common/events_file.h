@@ -1,9 +1,10 @@
 // common/events_file.h — 재생/기록 파일(.events) 포맷의 파서·인코더.
 // agent --replay / --record 와 analyzer_eval 이 공유한다 (헤더 온리, C++ 전용).
 //
-//   execve  <pid> <ppid> <comm> <filename>        [# 주석 … expect:<label>]
-//   connect <pid> <ppid> <comm> <ipv4> <port>     [# 주석 … expect:<label>]
-//   delay   <ms>
+//   execve   <pid> <ppid> <comm> <filename>                 [anc:PID:COMM|…] [# … expect:<label>]
+//   connect  <pid> <ppid> <comm> <ipv4> <port>              [anc:…]
+//   fileopen <pid> <ppid> <comm> <access> <ino> <dev> <path>[anc:…]   access=w/c/s/x 조합 or '-'
+//   delay    <ms>
 //   #! known-miss: <이유>                         ← 파일 지시어 ('#!' 접두): 평가 게이트에서 제외
 //   #! expect-max-severity: critical              ← 파일 지시어: 시나리오가 도달해야 할 최대 심각도
 //
@@ -54,6 +55,9 @@ inline std::string encode_field(const std::string &s) {
     return o;
 }
 
+// 조상 스냅샷 인코딩: anc:PID:COMM|PID:COMM|...  (comm 은 퍼센트 인코딩). 빈 세대는 생략.
+inline std::string encode_ancestry(const security_event &ev); // 아래 정의
+
 inline std::string decode_field(const std::string &s) {
     std::string o;
     for (size_t i = 0; i < s.size(); ++i) {
@@ -76,6 +80,45 @@ inline std::string trim(const std::string &s) {
     size_t a = s.find_first_not_of(" \t\r\n");
     size_t b = s.find_last_not_of(" \t\r\n");
     return a == std::string::npos ? "" : s.substr(a, b - a + 1);
+}
+
+// file access 비트마스크 <-> "wcsx" 문자열 ('-' = 0)
+inline std::string access_to_str(uint32_t a) {
+    std::string o;
+    if (a & PQSEC_FA_WRITE) o += 'w';
+    if (a & PQSEC_FA_CREATE) o += 'c';
+    if (a & PQSEC_FA_SENSITIVE) o += 's';
+    if (a & PQSEC_FA_EXEC) o += 'x';
+    return o.empty() ? "-" : o;
+}
+inline uint32_t access_from_str(const std::string &s) {
+    uint32_t a = 0;
+    for (char c : s) {
+        if (c == 'w') a |= PQSEC_FA_WRITE;
+        else if (c == 'c') a |= PQSEC_FA_CREATE;
+        else if (c == 's') a |= PQSEC_FA_SENSITIVE;
+        else if (c == 'x') a |= PQSEC_FA_EXEC;
+    }
+    return a;
+}
+
+// anc:PID:COMM|... 토큰을 ev.anc[] 로
+inline void parse_ancestry(const std::string &tok, security_event &ev) {
+    std::string body = tok.substr(4); // "anc:" 제거
+    size_t i = 0, gen = 0;
+    while (gen < PQSEC_ANCESTORS && i < body.size()) {
+        size_t bar = body.find('|', i);
+        std::string one = body.substr(i, bar == std::string::npos ? std::string::npos : bar - i);
+        size_t colon = one.find(':');
+        if (colon != std::string::npos) {
+            ev.anc[gen].pid = static_cast<uint32_t>(std::strtoul(one.substr(0, colon).c_str(), nullptr, 10));
+            std::string comm = decode_field(one.substr(colon + 1));
+            std::strncpy(ev.anc[gen].comm, comm.c_str(), sizeof(ev.anc[gen].comm) - 1);
+            ++gen;
+        }
+        if (bar == std::string::npos) break;
+        i = bar + 1;
+    }
 }
 
 // 스트림을 한 줄씩 파싱해 항목마다 cb 호출. name 은 오류 메시지용.
@@ -141,9 +184,9 @@ inline void parse(std::istream &in, const std::string &name,
             std::string file;
             if (!(is >> file))
                 bad("execve <filename> 누락");
-            file = decode_field(file);
             e.ev.type = PQSEC_EVT_EXECVE;
-            std::strncpy(e.ev.u.execve.filename, file.c_str(), sizeof(e.ev.u.execve.filename) - 1);
+            std::string dfile = decode_field(file);
+            std::strncpy(e.ev.u.execve.filename, dfile.c_str(), sizeof(e.ev.u.execve.filename) - 1);
         } else if (kind == "connect") {
             std::string ip;
             unsigned port = 0;
@@ -154,9 +197,26 @@ inline void parse(std::istream &in, const std::string &name,
             if (inet_pton(AF_INET, ip.c_str(), &e.ev.u.tcp.daddr) != 1)
                 bad("잘못된 IPv4 주소");
             e.ev.u.tcp.dport = static_cast<uint16_t>(port);
+        } else if (kind == "fileopen") {
+            std::string acc, path;
+            unsigned long long ino = 0;
+            unsigned long dev = 0;
+            if (!(is >> acc >> ino >> dev >> path))
+                bad("fileopen <access> <ino> <dev> <path> 형식 오류");
+            e.ev.type = PQSEC_EVT_FILE_OPEN;
+            e.ev.u.file.access = access_from_str(acc);
+            e.ev.u.file.ino = ino;
+            e.ev.u.file.dev = static_cast<uint32_t>(dev);
+            std::string dpath = decode_field(path);
+            if (dpath != "-")
+                std::strncpy(e.ev.u.file.path, dpath.c_str(), sizeof(e.ev.u.file.path) - 1);
         } else {
             bad("알 수 없는 항목 종류");
         }
+        // 선택 토큰: anc:...
+        std::string tok;
+        while (is >> tok)
+            if (tok.rfind("anc:", 0) == 0) parse_ancestry(tok, e.ev);
         cb(e);
     }
 }
@@ -170,16 +230,36 @@ inline std::string format_line(const security_event &ev) {
         std::snprintf(buf, sizeof(buf), "execve  %u %u %s %s", ev.pid, ev.ppid,
                       encode_field(comm.empty() ? "?" : comm).c_str(),
                       encode_field(file.empty() ? "?" : file).c_str());
-        return buf;
+        return std::string(buf) + encode_ancestry(ev);
     }
     if (ev.type == PQSEC_EVT_TCP_CONNECT) {
         char ip[INET_ADDRSTRLEN] = {0};
         inet_ntop(AF_INET, &ev.u.tcp.daddr, ip, sizeof(ip));
         std::snprintf(buf, sizeof(buf), "connect %u %u %s %s %u", ev.pid, ev.ppid,
                       encode_field(comm.empty() ? "?" : comm).c_str(), ip, ev.u.tcp.dport);
-        return buf;
+        return std::string(buf) + encode_ancestry(ev);
+    }
+    if (ev.type == PQSEC_EVT_FILE_OPEN) {
+        std::string path(ev.u.file.path, strnlen(ev.u.file.path, sizeof(ev.u.file.path)));
+        std::snprintf(buf, sizeof(buf), "fileopen %u %u %s %s %llu %u %s", ev.pid, ev.ppid,
+                      encode_field(comm.empty() ? "?" : comm).c_str(),
+                      access_to_str(ev.u.file.access).c_str(),
+                      static_cast<unsigned long long>(ev.u.file.ino), ev.u.file.dev,
+                      path.empty() ? "-" : encode_field(path).c_str());
+        return std::string(buf) + encode_ancestry(ev);
     }
     return "";
+}
+
+inline std::string encode_ancestry(const security_event &ev) {
+    std::string o;
+    for (int i = 0; i < PQSEC_ANCESTORS; ++i) {
+        if (ev.anc[i].pid == 0 && ev.anc[i].comm[0] == '\0') continue;
+        std::string comm(ev.anc[i].comm, strnlen(ev.anc[i].comm, sizeof(ev.anc[i].comm)));
+        o += (o.empty() ? " anc:" : "|") + std::to_string(ev.anc[i].pid) + ":" +
+             encode_field(comm.empty() ? "?" : comm);
+    }
+    return o;
 }
 
 } // namespace pqsec::events_file

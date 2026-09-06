@@ -8,6 +8,7 @@
 //
 //   agent                                   # Week 1 stdout
 //   agent --record capture.events           # 코퍼스 캡처 (capability 필요)
+//   agent --sensitive /etc/shadow ...       # 민감파일 inode 감시 목록 (반복/기본값 있음)
 //   agent --forward --id agent --peer analyzer.pub [--host 127.0.0.1] [--port 9443] [--queue 4096]
 //         [--synthetic | --replay FILE]
 
@@ -22,6 +23,8 @@
 #include <bpf/libbpf.h>
 
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -69,6 +72,15 @@ struct StdoutSink : EventSink {
             inet_ntop(AF_INET, &e.u.tcp.daddr, ip, sizeof(ip));
             printf("CONNECT  pid=%-6u ppid=%-6u comm=%-16s dst=%s:%u\n", e.pid, e.ppid, e.comm,
                    ip, e.u.tcp.dport);
+        } else if (e.type == PQSEC_EVT_FILE_OPEN) {
+            char acc[8] = {0}; int k = 0;
+            if (e.u.file.access & PQSEC_FA_WRITE) acc[k++] = 'w';
+            if (e.u.file.access & PQSEC_FA_CREATE) acc[k++] = 'c';
+            if (e.u.file.access & PQSEC_FA_SENSITIVE) acc[k++] = 's';
+            if (e.u.file.access & PQSEC_FA_EXEC) acc[k++] = 'x';
+            printf("FILE     pid=%-6u ppid=%-6u comm=%-16s access=%-4s ino=%llu path=%s\n",
+                   e.pid, e.ppid, e.comm, acc[0] ? acc : "-",
+                   (unsigned long long)e.u.file.ino, e.u.file.path[0] ? e.u.file.path : "(inode-only)");
         }
         fflush(stdout);
     }
@@ -244,6 +256,37 @@ static int libbpf_print(enum libbpf_print_level level, const char *fmt, va_list 
     return vfprintf(stderr, fmt, args);
 }
 
+// BPF sensitive_inodes 맵 키 — collector.bpf.c 의 struct sens_key 와 레이아웃 일치해야 함
+struct sens_key {
+    uint64_t ino;
+    uint32_t dev;
+    uint32_t _pad;
+};
+
+// stat 으로 (ino,dev) 를 얻어 맵에 넣는다. dev 는 커널 s_dev(new_encode_dev) 형식으로 변환.
+static void populate_sensitive(struct bpf_map *map, const std::vector<std::string> &files) {
+    static const char *kDefault[] = {"/etc/shadow", "/etc/gshadow", "/etc/sudoers",
+                                     "/root/.ssh/authorized_keys"};
+    std::vector<std::string> list = files;
+    if (list.empty())
+        for (const char *f : kDefault) list.push_back(f);
+    int n = 0;
+    for (const std::string &f : list) {
+        struct stat st{};
+        if (stat(f.c_str(), &st) != 0) {
+            fprintf(stderr, "[agent] 민감파일 stat 실패(건너뜀): %s\n", f.c_str());
+            continue;
+        }
+        sens_key k{};
+        k.ino = st.st_ino;
+        k.dev = (major(st.st_dev) << 20) | (minor(st.st_dev) & 0xfffff); // new_encode_dev
+        uint8_t one = 1;
+        if (bpf_map__update_elem(map, &k, sizeof(k), &one, sizeof(one), 0 /*BPF_ANY*/) == 0)
+            ++n;
+    }
+    fprintf(stderr, "[agent] 민감파일 감시 %d개 등록 (inode 매칭)\n", n);
+}
+
 // ---- 합성 이벤트 (eBPF 없이) ----------------------------------------------
 static security_event syn_execve(const char *comm, const char *file, uint32_t pid = 4242,
                                  uint32_t ppid = 4200) {
@@ -322,7 +365,8 @@ struct Options {
     uint16_t port = 9443;
     std::string id_prefix = "agent";
     std::string peer_pub = "analyzer.pub";
-    size_t queue = 4096; // 송신 큐 용량(이벤트 수). 168B × 4096 ≈ 690KB
+    size_t queue = 4096; // 송신 큐 용량(이벤트 수)
+    std::vector<std::string> sensitive; // 민감파일 감시 목록 (비면 기본값)
 };
 
 static Options parse_args(int argc, char **argv) {
@@ -342,6 +386,7 @@ static Options parse_args(int argc, char **argv) {
         else if (a == "--queue") o.queue = static_cast<size_t>(std::stoul(next("--queue")));
         else if (a == "--id") o.id_prefix = next("--id");
         else if (a == "--peer") o.peer_pub = next("--peer");
+        else if (a == "--sensitive") o.sensitive.push_back(next("--sensitive"));
         else { fprintf(stderr, "알 수 없는 인자: %s\n", a.c_str()); std::exit(1); }
     }
     if (o.synthetic && !o.replay_file.empty()) {
@@ -414,6 +459,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "[agent] BPF 로드 실패 (권한 확인, 또는 --synthetic/--replay 사용)\n");
         return 1;
     }
+    populate_sensitive(skel->maps.sensitive_inodes, o.sensitive);
     if (collector_bpf__attach(skel)) {
         fprintf(stderr, "[agent] BPF attach 실패\n");
         collector_bpf__destroy(skel);
