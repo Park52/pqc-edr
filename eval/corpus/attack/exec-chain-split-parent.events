@@ -1,9 +1,9 @@
 # 공격 시나리오: 다운로드와 실행을 다른 부모로 분리 (코릴레이터 회피 시도).
-# 목적 = 한계 문서화: 코릴레이터는 ppid 동일성으로 체인을 잇는다. dropper(ppid 7000)가 받고,
-# 별도 프로세스(ppid 8000, 예: systemd/cron)가 실행하면 체인이 안 걸린다.
-# 그래도 /tmp 실행 자체는 rule High 로 잡히므로 시나리오는 탐지되지만 Critical 로는 못 올라간다.
-#! expect-max-severity: high
-execve  7002 7000 bash      /usr/bin/curl                # expect:drop   — dropper 가 페이로드 받음
-execve  7003 7000 bash      /usr/bin/chmod               # expect:drop
-execve  8002 8000 systemd   /tmp/.cache/update-notifier  # expect:alert  — 다른 부모가 실행 → 체인 미연결, rule High 만
-connect 8002 8000 update-no 203.0.113.44 443             # expect:drop   — 공인 443 단독 → LLM 영역
+# dropper(ppid 7000)가 페이로드를 /tmp 에 쓰고, 다른 프로세스(ppid 8000, 예: systemd/cron)가 실행.
+# ppid 동일 매칭은 회피되지만, write→exec 는 파일 경로가 조인 키라 부모와 무관하게 잡힌다(C3).
+#! expect-max-severity: critical
+execve  7002 7000 bash      /usr/bin/curl                        # expect:drop  — dropper 가 페이로드 받음
+fileopen 7002 7000 curl      w 900001 66306 /tmp/.cache/update-notifier  # expect:drop — 스테이징 쓰기(맥락)
+execve  7003 7000 bash      /usr/bin/chmod                       # expect:drop
+execve  8002 8000 systemd   /tmp/.cache/update-notifier          # expect:alert — 다른 부모가 실행 → write-exec 체인 → Critical
+connect 8002 8000 update-no 203.0.113.44 443                     # expect:drop  — 공인 443 단독 → LLM 영역

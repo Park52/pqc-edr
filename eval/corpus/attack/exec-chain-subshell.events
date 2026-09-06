@@ -1,0 +1,7 @@
+# 공격 시나리오: 다운로드와 실행을 서로 다른 서브셸에 넣어 부모를 분리 (ppid 동일 매칭 회피).
+# 두 서브셸이 같은 bash(pid 8000)의 자식이라 조상 집합이 8000 을 공유 → C1(조상 교집합)이 잡는다.
+# ppid 동일만 봤다면 놓쳤을 것 — 조상 교집합의 가치.
+#! expect-max-severity: critical
+execve  8102 8101 bash /usr/bin/curl               anc:8101:bash|8000:bash   # expect:drop — 서브셸 A 에서 다운로더
+execve  8103 8101 bash /usr/bin/chmod              anc:8101:bash|8000:bash   # expect:drop
+execve  8202 8201 bash /tmp/.stage/payload         anc:8201:bash|8000:bash   # expect:alert — 서브셸 B 에서 실행, 공통 조상 8000 → Critical

@@ -1,7 +1,8 @@
-# 공격 시나리오: 자격증명 탈취 정찰 — cat /etc/shadow 등.
-# known-miss: 프리필터는 실행 파일명만 보고 인자를 못 본다. cat 은 화이트리스트라 Drop → 완전 미탐.
-# 정직한 사각지대 기록. (해결하려면 execve 인자 캡처가 필요 — 훅 확장 과제.)
-#! known-miss: 화이트리스트가 인자를 못 봄 — cat /etc/shadow 가 cat 실행으로만 보여 Drop
-execve  9101 9100 bash whoami        # expect:drop
-execve  9102 9100 bash /usr/bin/cat  # expect:alert  — 실제로는 /etc/shadow 읽음, 우리는 못 봄 → Drop(미탐)
-execve  9103 9100 bash /usr/bin/cat  # expect:alert  — /etc/passwd
+# 공격 시나리오: 자격증명 탈취 정찰 — /etc/shadow 등 민감파일 읽기.
+# 이전엔 실행 파일명만 봐서 cat 은 Drop(미탐)이었다. security_file_open 훅이 inode 로 민감읽기를
+# 잡아 이제 탐지된다(prefilter High). 인자 파싱 없이 파일 아이덴티티로.
+#! expect-max-severity: high
+execve  9101 9100 bash /usr/bin/cat                              # expect:drop  — cat 실행 자체는 정상
+fileopen 9102 9100 cat  s 400123 66306 /etc/shadow              # expect:alert — 민감파일 읽기 → High
+fileopen 9103 9100 cat  s 400124 66306 /etc/gshadow             # expect:alert
+execve  9104 9100 bash /usr/bin/whoami                           # expect:drop

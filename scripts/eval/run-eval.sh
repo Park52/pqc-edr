@@ -48,10 +48,13 @@ fi
   fi
   echo
   echo "## 튜닝 로그"
-  echo "- **2026-09-06 초기 실 API 실행**: 정상 코퍼스 오탐률 5.62% (284/5055), 전량 \`gmake\`(cmake 가 부르는 GNU make)"
-  echo "  와 \`ss\`(소켓 통계) — 화이트리스트에 없어 LLM 까지 올라가 Haiku·Sonnet 이 의심 판정."
-  echo "  → 두 도구(+ldconfig/ctest/dirname)를 \`prefilter.cpp\` 화이트리스트에 추가. **재측정 FPR 0.00%**, 게이트·탐지율 불변."
-  echo "  이것이 평가 세트의 목적: 오탐원을 데이터로 찾아 룰을 튜닝하고 회귀를 게이트로 고정."
+  echo "- **2026-09-06 #1**: 초기 실 API 에서 정상 오탐률 5.62% (전량 \`gmake\`·\`ss\`) — 화이트리스트에 없어 LLM 까지"
+  echo "  올라감. 두 도구(+ldconfig/ctest/dirname)를 \`prefilter.cpp\` 화이트리스트에 추가 → 그 코퍼스에서 0.00%."
+  echo "- **2026-09-06 #2 (파일훅·계보 추가 후)**: 정상 코퍼스를 재캡처(docker·make 활동 포함)하니 LLM 오탐이"
+  echo "  \`gmake→/bin/sh\`(make 가 레시피마다 셸 실행)와 \`docker\` 에 집중. **전부 LLM-only — 룰 단독 FPR 은 0%.**"
+  echo "  \`sh\`/\`bash\` 는 리버스셸의 핵심이라 화이트리스트에 넣으면 센서가 눈먼다 → **의도적으로 튜닝하지 않고 기록.**"
+  echo "  교훈: 이 오탐은 값싸게 못 없앤다. 그래서 LLM 은 앵커가 아니라 triage 이고(룰·코릴레이션이 판정),"
+  echo "  프로덕션이라면 escalate 대상을 좁히거나 LLM 의심을 코릴레이션으로 교차검증해야 한다."
   echo
   echo "## 읽는 법"
   echo "- **오탐률(FPR)**: 정상 코퍼스에서 alert 난 비율. source 별로 어느 층이 오탐을 냈는지 분해."

@@ -35,6 +35,9 @@ std::string event_summary(const security_event &ev);
 bool is_private_ipv4(uint32_t daddr_net);
 std::string basename_of(const char *path);
 
+// 프로세스 계보 문자열 comm<-parent<-... (LLM 컨텍스트·설명용)
+std::string process_tree(const security_event &ev);
+
 } // namespace pqsec::analyzer
 
 #endif // PQSEC_PREFILTER_H

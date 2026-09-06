@@ -59,6 +59,17 @@ PrefilterResult prefilter_tcp(const security_event &ev) {
     return {PrefilterDecision::Alert, Severity::Medium, "공인 IP 비표준 포트 아웃바운드"};
 }
 
+PrefilterResult prefilter_file(const security_event &ev) {
+    // 민감파일 읽기(inode 매칭) → 즉시 High. 인자를 못 보던 사각지대(cat /etc/shadow)를 닫는다.
+    if (ev.u.file.access & PQSEC_FA_SENSITIVE) {
+        std::string what = ev.u.file.path[0] ? std::string(ev.u.file.path)
+                                             : "ino=" + std::to_string(ev.u.file.ino);
+        return {PrefilterDecision::Alert, Severity::High, "민감파일 접근: " + what};
+    }
+    // 스테이징 쓰기 자체는 정상 도구도 늘 한다 → Drop. 코릴레이터가 실행이 뒤따를 때만 체인으로.
+    return {PrefilterDecision::Drop, Severity::Info, "스테이징 쓰기 (코릴레이션 맥락)"};
+}
+
 } // namespace
 
 // 커널에서 온 comm/filename 은 신뢰할 수 없는 바이트열 — 제어문자(개행 등)를 '?' 로 바꿔
@@ -91,9 +102,23 @@ PrefilterResult prefilter(const security_event &ev) {
     switch (ev.type) {
     case PQSEC_EVT_EXECVE:      return prefilter_execve(ev);
     case PQSEC_EVT_TCP_CONNECT: return prefilter_tcp(ev);
+    case PQSEC_EVT_FILE_OPEN:   return prefilter_file(ev);
     default:
         return {PrefilterDecision::Escalate, Severity::Info, "알 수 없는 이벤트 타입"};
     }
+}
+
+// 프로세스 계보 문자열: comm<-parent<-... (조상이 있을 때만)
+std::string process_tree(const security_event &ev) {
+    std::string comm(ev.comm, strnlen(ev.comm, sizeof(ev.comm)));
+    std::string t = comm.empty() ? "?" : comm;
+    for (int i = 0; i < PQSEC_ANCESTORS; ++i) {
+        if (ev.anc[i].pid == 0 && ev.anc[i].comm[0] == '\0')
+            break;
+        std::string ac(ev.anc[i].comm, strnlen(ev.anc[i].comm, sizeof(ev.anc[i].comm)));
+        t += "<-" + (ac.empty() ? "?" : ac);
+    }
+    return t;
 }
 
 std::string event_summary(const security_event &ev) {
@@ -107,6 +132,12 @@ std::string event_summary(const security_event &ev) {
         inet_ntop(AF_INET, &ev.u.tcp.daddr, ip, sizeof(ip));
         std::snprintf(buf, sizeof(buf), "connect comm=%s dst=%s:%u", comm.c_str(), ip,
                       ev.u.tcp.dport);
+    } else if (ev.type == PQSEC_EVT_FILE_OPEN) {
+        const std::string comm = printable(ev.comm, sizeof(ev.comm));
+        const std::string path = ev.u.file.path[0] ? printable(ev.u.file.path, sizeof(ev.u.file.path))
+                                                    : ("ino=" + std::to_string(ev.u.file.ino));
+        const char *kind = (ev.u.file.access & PQSEC_FA_SENSITIVE) ? "read-sensitive" : "write";
+        std::snprintf(buf, sizeof(buf), "fileopen comm=%s %s %s", comm.c_str(), kind, path.c_str());
     } else if (ev.type == PQSEC_EVT_AGENT_DROP) {
         std::snprintf(buf, sizeof(buf), "agent-drop dropped=%llu total=%llu sent=%llu",
                       static_cast<unsigned long long>(ev.u.drop.dropped),
@@ -115,7 +146,10 @@ std::string event_summary(const security_event &ev) {
     } else {
         std::snprintf(buf, sizeof(buf), "unknown type=%u", ev.type);
     }
-    return std::string(buf);
+    std::string out(buf);
+    if (ev.anc[0].pid != 0 || ev.anc[0].comm[0] != '\0') // 계보가 있으면 트리 부착
+        out += " tree=[" + process_tree(ev) + "]";
+    return out;
 }
 
 } // namespace pqsec::analyzer
