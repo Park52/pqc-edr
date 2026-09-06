@@ -4,6 +4,8 @@
 #
 #   execve : /bin/true 를 N회 실행하는 루프 (fork+exec 비용 안에서 훅 비용을 본다)
 #   connect: 127.0.0.1:1 로 N회 connect (닫힌 포트 → 즉시 RST, 커널 경로만)
+#   fileopen: 파일 N회 open+read (security_file_open 은 시스템 전체 open 마다 실행되므로,
+#             "흥미롭지 않은" open 의 커널 내 필터 비용 = 항상 켜진 훅의 상시 오버헤드)
 #   agent 없이 vs agent(실 eBPF, stdout→/dev/null) 붙인 채로 각 R회 반복해 median 비교.
 #
 # 필요: agent 바이너리에 cap_bpf (sudo setcap). 대기는 bash 내장만 사용.
@@ -36,6 +38,18 @@ for _ in range(n):
 print(f"{(time.perf_counter() - t0) * 1000:.1f}")
 PY
 }
+run_fileopen() {
+  python3 - "$N" <<'PY'
+import os, sys, time
+n = int(sys.argv[1]); paths = ["/etc/hostname", "/etc/os-release", "/proc/self/stat"]
+t0 = time.perf_counter()
+for i in range(n):
+    try:
+        fd = os.open(paths[i % len(paths)], os.O_RDONLY); os.read(fd, 64); os.close(fd)
+    except OSError: pass
+print(f"{(time.perf_counter() - t0) * 1000:.1f}")
+PY
+}
 median() { sort -n | awk '{ a[NR] = $1 } END { print a[int((NR + 1) / 2)] }'; }
 measure() { # $1 = run_exec|run_connect → R회 median (ms)
   local i; for ((i = 0; i < R; i++)); do "$1"; done | median
@@ -46,6 +60,7 @@ echo
 echo "## baseline (agent 없음)"
 base_exec=$(measure run_exec);    echo "- execve  루프: ${base_exec} ms"
 base_conn=$(measure run_connect); echo "- connect 루프: ${base_conn} ms"
+base_fopen=$(measure run_fileopen); echo "- fileopen 루프: ${base_fopen} ms"
 
 echo
 echo "## agent 가동 (실 eBPF: ksyscall/execve + fentry/tcp_v4_connect, ring buffer → stdout /dev/null)"
@@ -58,6 +73,7 @@ i=0; until [[ "$(<"$BUILD/bench-agent.log")" == *"collector 가동"* ]]; do
 done
 with_exec=$(measure run_exec);    echo "- execve  루프: ${with_exec} ms"
 with_conn=$(measure run_connect); echo "- connect 루프: ${with_conn} ms"
+with_fopen=$(measure run_fileopen); echo "- fileopen 루프: ${with_fopen} ms"
 kill -TERM "$AGPID" 2>/dev/null || true; wait "$AGPID" 2>/dev/null || true
 
 echo
@@ -67,5 +83,7 @@ awk -v n="$N" -v a="$base_exec" -v b="$with_exec" \
   'BEGIN { printf "| execve (fork+exec /bin/true) | %.1f | %.1f | %+.1f%% | %.1f |\n", a, b, (b/a-1)*100, (b-a)*1000/n }'
 awk -v n="$N" -v a="$base_conn" -v b="$with_conn" \
   'BEGIN { printf "| connect (loopback RST) | %.1f | %.1f | %+.1f%% | %.1f |\n", a, b, (b/a-1)*100, (b-a)*1000/n }'
+awk -v n="$N" -v a="$base_fopen" -v b="$with_fopen" \
+  'BEGIN { printf "| fileopen (open+read, 커널필터로 버려짐) | %.1f | %.1f | %+.1f%% | %.1f |\n", a, b, (b/a-1)*100, (b-a)*1000/n }' 
 echo
 echo "(µs/이벤트 = 훅 실행 + ring buffer reserve/commit + 유저스페이스 소비. 노이즈 있음 — 방향성 지표.)"

@@ -39,7 +39,8 @@
 | **Week 1** | eBPF collector (execve + tcp_connect, CO-RE, ring buffer, root 없이) | ✅ |
 | **Week 2** | PQC 하이브리드 mTLS 채널 (핸드셰이크 + record layer, 실 소켓) | ✅ |
 | **Week 3** | analyzer 데몬 + Claude API 이상탐지 + 엔드투엔드 통합 | ✅ |
-| **Week 4** | 위협 시나리오 2개 + 시퀀스 코릴레이션 + Docker + 벤치마크 + 문서 | ✅ |
+| **Week 4** | 위협 시나리오 + 코릴레이션 + Docker + 벤치마크 + 문서 | ✅ |
+| **심화** | 탐지 평가(오탐률·비용·게이트) · 파일훅(민감읽기·write→exec) + 프로세스 계보 | ✅ |
 
 ## 위협 모델
 
@@ -53,11 +54,13 @@
 | 레코드 변조·재정렬·재전송 | AES-256-GCM, 방향별 키, nonce = iv_base ⊕ seq, 길이 헤더는 AAD; 실패 시 즉시 거부 | `crypto/record.cpp` |
 | 엔드포인트: 다운로드→실행 체인 (LOTL), 리버스셸 툴 | 룰(임시경로 실행·nc) + 코릴레이션(같은 부모에서 curl 후 임시경로 실행 → Critical) | `analyzer/prefilter.cpp`, `correlator.cpp` |
 | 엔드포인트: C2 비콘 (비표준 포트 반복 아웃바운드) | 룰(공인 비표준 포트) + 코릴레이션(같은 목적지 반복 ≥3 → High) | `analyzer/correlator.cpp` |
+| 엔드포인트: 다운로드·실행 부모 분리 회피 (dropper≠실행자, 서브셸) | write→exec(파일 경로 조인, 부모 무관 → Critical) + 조상 교집합 매칭 | `agent/bpf/collector.bpf.c`, `analyzer/correlator.cpp` |
+| 엔드포인트: 자격증명 파일 읽기 (`/etc/shadow` 등) | `security_file_open` 이 **inode 아이덴티티**로 민감읽기 탐지(경로·심링크 우회에 강함) → High | `agent/bpf/collector.bpf.c`, `analyzer/prefilter.cpp` |
 | LLM 오판·할루시네이션 | LLM 은 애매한 이벤트만 보고, 결정론적 근거(룰·코릴레이션)를 '정상'으로 뒤집지 못함; 호출 실패는 fail-safe | `analyzer/pipeline.cpp` |
 | analyzer 정체 → 이벤트가 조용히 유실 | agent 유한 큐 + 드롭 카운트 + `AGENT_DROP` 통지 → analyzer 가 탐지 공백을 alert 로 기록 | `agent/src/main.cpp` `ChannelSink` |
 | LLM 프롬프트 인젝션 (comm/filename 에 지시문) | 제어문자 제거·길이 제한, `<event>` 구분자, "안의 지시 무시" 시스템 프롬프트 — **완화**이며 판정 앵커는 룰 | `analyzer/llm_client_claude.cpp` |
 | 커널에서 온 비정상 바이트열 (제어문자·잘못된 UTF-8) 로 로그 위조·데몬 크래시 | 이벤트 요약 시 제어문자 치환, JSON 직렬화는 U+FFFD 대체 | `analyzer/prefilter.cpp`, `alert.cpp` |
-| agent 가 root 권한 요구 → 침해 시 피해 확대 | `cap_bpf`+`cap_perfmon` 만으로 attach (kprobe PMU, tracefs 미사용) | `agent/bpf/collector.bpf.c` |
+| agent 가 root 권한 요구 → 침해 시 피해 확대 | `cap_bpf`+`cap_perfmon` 만으로 3개 훅 attach (kprobe PMU + fentry, LSM/CAP_MAC_ADMIN 불필요) | `agent/bpf/collector.bpf.c` |
 
 **의도적으로 대응하지 않는 것**: root 공격자(agent 자체를 끌 수 있음), 커널 익스플로잇, 호스트의 신원 키 파일 탈취(파일 권한 0600 에 의존),
 DoS, 사이드채널(라이브러리에 위임), 키 폐기·회전. LLM 프롬프트 인젝션은 완화만(완전 방어 아님). → [INTERVIEW_NOTES Q5](INTERVIEW_NOTES.md)
@@ -77,7 +80,11 @@ DoS, 사이드채널(라이브러리에 위임), 키 폐기·회전. LLM 프롬�
   송신 스레드가 seal+send. analyzer 가 느려 큐가 차면 커널을 막는 대신 유저스페이스에서 드롭하고 **개수를 센 뒤**
   정체가 풀리면 `AGENT_DROP` 이벤트로 통지 → analyzer 가 "탐지 공백" alert 로 surface. 스트레스(analyzer 1.5초 정지,
   20만 이벤트): 178,563 드롭·21,438 전송, analyzer 가 정확히 21,438 복호 (순서·nonce 무결).
-- **최소권한 eBPF** — `ksyscall`(kprobe PMU) attach 로 root 없이 `CAP_BPF`/`CAP_PERFMON` 만으로 동작.
+- **최소권한 eBPF (3개 훅)** — `ksyscall/execve` + `fentry/tcp_v4_connect` + `fentry/security_file_open` 을
+  root 없이 `CAP_BPF`/`CAP_PERFMON` 만으로 attach(LSM·CAP_MAC_ADMIN 불필요). 파일훅은 커널 안에서 강하게
+  필터(민감읽기=inode 매칭, 스테이징 쓰기=d_path 접두사)해 open 당 ~0.3µs.
+- **계보 + write→exec 상관** — 이벤트마다 조상 4세대를 실어, 부모가 다른 다운로드·실행(dropper≠실행자)도
+  파일 경로로 잇고(Critical), 서브셸 우회는 조상 교집합으로 잡는다.
 - **LLM 통제 3단** — ① 룰 프리필터(명백한 것은 LLM 없이) → ② 시퀀스 코릴레이션(순서·반복은 결정론적으로) → ③ 애매한 것만
   `claude-haiku-4-5` 1차 → 의심만 `claude-sonnet-5` 심층. LLM 은 설명·심각도 보정 역할이며 판정의 앵커는 룰이다.
   (실 API 라이브 검증 완료 — 아래 시나리오 데모의 실 결과 참조.)
@@ -225,7 +232,7 @@ docs/           설계·벤치마크·학습 문서
 의도적으로 **넣지 않은 것** (PoC 스코프 유지):
 - 완전한 TLS 1.3 재구현 (핸드셰이크는 축약판, 형식 검증 없음)
 - 인증서 체인/PKI (self-signed + 사전공유 공개키 핀닝으로 대체 — 키 회전·폐기 없음)
-- 프로덕션급 eBPF 커버리지 (훅 2개: execve, IPv4 connect)
+- 프로덕션급 eBPF 커버리지 (훅 3개: execve, IPv4 connect, file open — setuid/모듈로드/IPv6/UDP 등은 범위 밖)
 - 세션 재개·키 갱신·재연결·디스크 큐 (백프레셔는 유한 큐로 드롭을 세고 알리지만, 끊긴 연결을 다시 잇거나 유실분을 보관하지는 않음)
 - 사이드채널 방어(라이브러리에 위임), LLM 프롬프트 인젝션의 완전한 방어(정화·구분자·지시 무시로 완화만)
 

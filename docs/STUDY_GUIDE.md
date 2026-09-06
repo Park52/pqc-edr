@@ -583,6 +583,33 @@ Claude API 는 **HTTPS 위의 REST API** 다: `https://api.anthropic.com/v1/mess
 - 검증 방법이 재미있다: analyzer 를 `kill -STOP` 으로 1.5초 얼리고 20만 이벤트를 쏜다 → 178,563 드롭, 21,438 전송,
   analyzer 가 정확히 21,438 복호. 숫자가 맞으면 순서·nonce·드레인이 모두 맞은 것.
 
+### 9.8 파일 접근 훅과 프로세스 계보 (심화)
+"부모가 curl 이면 체인"은 서브셸 한 겹, 부모 분리 한 번에 뚫린다. 진짜 연결고리는 부모가 아니라 **파일**이다.
+- **`fentry/security_file_open`**: 커널의 LSM 훅 지점에 fentry 로 붙는다(LSM BPF 가 아니라 fentry 라 CAP_MAC_ADMIN
+  없이 cap_bpf 로 로드). 시스템 전체 open 마다 실행되므로 **커널 안에서 강하게 필터**한다:
+  · 민감읽기 = inode 아이덴티티((ino,dev)) 매칭. 경로가 아니라 파일 그 자체를 보므로 심링크·하드링크·바인드마운트로
+    `/etc/shadow` 를 다른 경로로 열어도 잡힌다. 유저스페이스가 stat 으로 (ino,dev)를 BPF 해시맵에 넣어둔다.
+  · 스테이징 쓰기 = `FMODE_WRITE` + `bpf_d_path` 로 절대경로를 얻어 `/tmp` 접두사 확인. 접두사 아니면 ring buffer
+    예약도 안 한다(per-cpu 스크래치에 받아 판정 후 버림). — `bpf_d_path` 가 이 훅에서 허용되는지 로드로 검증했다.
+- **write→exec 상관(C3)**: "경로 P 가 스테이징에 쓰였다 → P 가 실행됐다". 파일 경로가 조인 키라 **누가 썼고 누가
+  실행했는지(부모)와 무관**하다. dropper 와 실행자가 다른 프로세스여도 잡는다(split-parent).
+- **조상 스냅샷 + 교집합(C1 완화)**: 이벤트마다 real_parent 체인 4세대(pid+comm)를 커널에서 담는다(fork/exit
+  상태머신 불필요). "다운로더 실행"과 "임시경로 실행"이 **공통 조상**을 공유하면 체인 — 두 서브셸이 같은 bash 의
+  자식이면 그 bash pid 를 공유하므로 ppid 가 달라도 잡는다.
+- **왜 커널 필터가 핵심인가**: open 은 초당 수천 번이다. 유저스페이스로 다 올리면 죽는다. f_mode 검사 + inode
+  조회로 대부분을 커널에서 버려서 open 당 ~0.3µs, 흥미로운 것만 채널로. eBPF 의 존재 이유(in-kernel filtering)의 실제 예.
+- **정직한 한계**: execve 가 상대경로(`./x`)면 C3 경로 매칭이 깨진다. inode 로 조인하면 더 강하지만 execve 훅이
+  inode 를 안 줘서 현재는 경로 기반. 계보를 이벤트에 실어 스키마가 168→272B 로 커진 것도 비용(벤치 §4).
+
+### 9.9 탐지 평가 — 오탐률·비용을 숫자로 (`analyzer/src/eval.cpp`, `docs/EVAL.md`)
+- 라벨된 `.events` 코퍼스를 데몬과 **같은 분류 코드**(`classify_event`)에 소켓 없이 흘려 층별 오탐·탐지·비용을 집계.
+- **정상 코퍼스**는 실 eBPF 로 캡처한 개발 세션(익명화). **공격 코퍼스**는 시나리오마다 `expect:alert|drop` 라벨.
+  못 잡는 걸 정직히 표기하는 `known-miss` 는 게이트에서 제외.
+- **측정→튜닝→재측정** 루프: 첫 실측이 `gmake`·`ss` 오탐을 지목 → 화이트리스트 → 재측정. 파일훅 추가 후엔
+  LLM 오탐이 `gmake→sh`·`docker` 에 집중(룰 단독 0%)인 걸 발견했고, `sh` 는 공격 핵심이라 일부러 튜닝하지 않았다.
+- **회귀 게이트**: `ctest` 의 `analyzer.eval_gate` 가 known-miss 아닌 시나리오의 ≥High 미탐 시 실패 → 탐지율이
+  코드로 고정된다. LLM 은 결정론 근거를 못 뒤집고, 실측상 오탐이 있어 앵커가 아니라 triage 다.
+
 ### 9.7 테스트를 묶는 법 — ctest 와 CI
 - 셀프테스트 실행파일들은 검증 실패 시 non-zero 로 종료한다. CMake `add_test` 로 등록하면 `ctest` 한 줄로 전부 돈다.
 - GitHub Actions(`.github/workflows/ci.yml`)는 푸시마다 리눅스 러너에서 liboqs 빌드(캐시) → 빌드 → ctest → Docker

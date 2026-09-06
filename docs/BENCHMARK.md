@@ -84,15 +84,19 @@ sudo setcap cap_bpf,cap_perfmon,cap_net_admin+ep build/agent/agent && scripts/be
 
 | 경로 | agent 없음 | agent 있음 | 차이 | **이벤트당 추가** |
 |---|---:|---:|---:|---:|
-| execve (fork+exec `/bin/true`) | 1883.8 ms | 1926.4 ms | +2.3% | **14.2 µs** |
-| connect (loopback, 즉시 RST) | 127.2 ms | 166.3 ms | +30.7% | **13.0 µs** |
+| execve (fork+exec `/bin/true`) | 1909.8 ms | 1884.9 ms | -1.3% | 노이즈(±) |
+| connect (loopback, 즉시 RST) | 128.9 ms | 167.8 ms | +30.2% | **13.0 µs** |
+| fileopen (open+read, 커널필터로 버려짐) | 8.9 ms | 9.8 ms | +10.1% | **0.3 µs** |
 
-훅: `ksyscall/execve`(kprobe) + `fentry/tcp_v4_connect`. 이벤트당 비용 = 훅 실행 + `BPF_CORE_READ` +
-ring buffer reserve/commit + 유저스페이스 소비(stdout→/dev/null).
+훅: `ksyscall/execve`(kprobe) + `fentry/tcp_v4_connect` + `fentry/security_file_open`. 이벤트당 비용 =
+훅 실행 + `BPF_CORE_READ` + ring buffer reserve/commit + 유저스페이스 소비(stdout→/dev/null).
+execve 는 fork+exec(~630µs) 이 지배해 훅 비용이 측정 노이즈에 묻힌다(음수도 그래서 나온다).
 
 해석:
-- **절대치는 이벤트당 ~13–14µs 로 두 훅이 비슷하다.** 상대 비율이 다른 건 baseline 차이 —
-  fork+exec 은 원래 ~630µs 라 +2%, loopback connect 는 ~42µs 라 +31% 로 보인다.
+- **connect 훅은 이벤트당 ~13µs.** 상대 비율(+30%)이 커 보이는 건 baseline 이 작아서다(loopback connect ~43µs).
+- **`security_file_open` 은 항상 켜져 시스템 전체 open 마다 실행되지만 open 당 ~0.3µs 로 싸다.** 흥미롭지 않은
+  open(대부분)은 커널 안에서 `f_mode` 검사 + inode 맵 조회로 즉시 걸러져 ring buffer 에 오르지 않기 때문.
+  스테이징 쓰기만 `bpf_d_path` 를 호출하고, 그것도 접두사 불일치면 예약 없이 버린다.
 - 실 워크로드(초당 수백 이벤트)에선 CPU 1% 미만. 초당 수만 execve 를 하는 빌드 서버라면 수 % 까지 갈 수 있다.
 - 채널 전송 모드에선 여기에 AES-GCM 1µs + 소켓 send 가 더해진다. analyzer 가 느리면(LLM 호출 수백 ms) TCP
   백프레셔가 걸리는데, agent 는 ring buffer 콜백을 막지 않고 **유한 큐(기본 4096)에서 드롭을 세어 통지**한다.
@@ -105,3 +109,5 @@ ring buffer reserve/commit + 유저스페이스 소비(stdout→/dev/null).
 - 데스크톱 x86 1대. 임베디드/차량 ECU(ARM Cortex-A/R) 에선 ML-DSA sign 이 수 ms 가 될 수 있어 다시 재야 한다.
 - liboqs 는 이 CPU 의 AVX2 최적화 구현을 쓴다. 범용 C 구현은 수 배 느리다.
 - 네트워크 RTT·패킷 손실은 측정하지 않았다(인메모리 transport).
+- 계보(anc[4])·파일이벤트 추가로 `security_event` 는 168→272B 가 됐다. 레코드당 와이어 +104B(+AEAD 18B).
+  이벤트 볼륨이 큰 호스트에선 채널 대역이 그만큼 는다 — 계보 세대 수나 조건부 전송으로 줄일 여지.
